@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Merge Lounge · claude-mem</title>
+  <meta name="description" content="A pixel hangout for everyone with a merged PR in claude-mem.">
+  <meta name="theme-color" content="#0c0a18">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/pixelify-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/pixelify-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/silkscreen-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <!-- ============ landing / check-in ============ -->
+  <section id="landing" class="landing" hidden>
+    <canvas id="hero" aria-hidden="true"></canvas>
+    <div class="hero-shade" aria-hidden="true"></div>
+    <div class="landing-inner">
+      <p class="eyebrow"><span class="chip">claude-mem</span> merged contributors only</p>
+      <h1 class="title" aria-label="Merge Lounge"><span class="t1">MERGE</span><span class="t2">LOUNGE</span></h1>
+      <p class="lede">A pixel hangout for everyone who's landed a PR in claude-mem. Walk around, grab a kombucha, ring the merge gong, talk shop.</p>
+      <p class="live"><i class="dot"></i><span><b id="liveOnline">·</b>&nbsp;inside now</span>&ensp;·&ensp;<span><b id="liveContrib">·</b>&nbsp;contributors</span>&ensp;·&ensp;<span><b id="livePRs">·</b>&nbsp;PRs merged</span></p>
+
+      <form class="card" id="step1" autocomplete="off">
+        <label for="gh">Your GitHub username</label>
+        <div class="row">
+          <span class="at" aria-hidden="true">@</span>
+          <input id="gh" name="gh" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="your-handle" maxlength="39" required>
+          <button class="btn primary" id="checkBtn" type="submit">Check in</button>
+        </div>
+        <p class="fine">We only look at public stuff: your merged PRs on claude-mem and one public gist. No GitHub permissions, no OAuth.</p>
+        <p class="err" id="err1" role="alert"></p>
+      </form>
+
+      <div class="card" id="step2" hidden>
+        <p class="found">Found you, <b id="foundLogin"></b> — <b id="foundCount"></b>.</p>
+        <p class="step-label">Prove it's you: put this code in a <b>public gist</b>.</p>
+        <div class="codebox">
+          <code id="code"></code>
+          <button class="btn ghost small" type="button" data-copy="code">Copy</button>
+        </div>
+        <div class="tabs" role="tablist">
+          <button class="tab active" type="button" role="tab" data-tab="cli" aria-selected="true">Terminal</button>
+          <button class="tab" type="button" role="tab" data-tab="web" aria-selected="false">Browser</button>
+        </div>
+        <div class="tabpane" id="tab-cli">
+          <pre id="cli"></pre>
+          <button class="btn ghost small" type="button" data-copy="cli">Copy command</button>
+        </div>
+        <div class="tabpane" id="tab-web" hidden>
+          <ol>
+            <li>Open <a href="https://gist.github.com/" target="_blank" rel="noopener noreferrer">gist.github.com</a></li>
+            <li>Paste the code as the description or the file</li>
+            <li>Hit <b>Create public gist</b></li>
+          </ol>
+        </div>
+        <button class="btn primary wide" id="verifyBtn" type="button">I made the gist — let me in</button>
+        <p class="status" id="status2" role="status"></p>
+        <button class="link" id="backBtn" type="button">← use a different username</button>
+      </div>
+
+      <div class="card" id="stepNo" hidden>
+        <p class="found">No merged PRs found for <b id="noLogin"></b> yet.</p>
+        <p>The lounge is for people with a merged PR in <a href="https://github.com/thedotmack/claude-mem" target="_blank" rel="noopener noreferrer">claude-mem</a>. Land one and come back — the door's always open.</p>
+        <div class="row gap">
+          <a class="btn primary" href="https://github.com/thedotmack/claude-mem/issues" target="_blank" rel="noopener noreferrer">Find an issue</a>
+          <button class="btn ghost" id="noBack" type="button">Try another name</button>
+        </div>
+      </div>
+    </div>
+    <footer class="landing-foot">the skyline runs on San Francisco time · <a href="https://github.com/thedotmack/claude-mem" target="_blank" rel="noopener noreferrer">claude-mem on GitHub</a></footer>
+  </section>
+
+  <!-- ============ the room ============ -->
+  <section id="room" class="room" hidden>
+    <canvas id="stage" aria-label="The lounge. Tap the floor to walk, tap people to see who they are."></canvas>
+
+    <header class="topbar" id="topbar">
+      <div class="brand"><span class="mark" aria-hidden="true"></span><span class="name">MERGE LOUNGE</span></div>
+      <div class="pill" id="onlinePill" title="people in the lounge"><i class="dot"></i><span id="onlineCount">1</span><span class="pill-l">inside</span></div>
+      <nav class="actions" aria-label="Lounge">
+        <button class="iconbtn" id="btnFame" type="button" aria-label="Wall of fame">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2h8v1h2v3h-1v1h-1v1h-1v1H9v2h2v1h1v2H4v-2h1v-1h2V9H5V8H4V7H3V6H2V3h2V2zm0 2H3v1h1V4zm9 0h-1v1h1V4z"/></svg>
+        </button>
+        <button class="iconbtn" id="btnLog" type="button" aria-label="Chat history">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v8H7l-3 3v-3H2V3zm2 2v1h8V5H4zm0 2v1h6V7H4z"/></svg>
+          <span class="badge" id="logBadge" hidden></span>
+        </button>
+        <button class="iconbtn" id="btnWardrobe" type="button" aria-label="Change your look">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 2h2v1h2V2h2l3 3-2 2h-1v7H5V7H4L2 5l3-3z"/></svg>
+        </button>
+        <button class="iconbtn" id="btnMenu" type="button" aria-label="Menu">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v2H2V3zm0 4h12v2H2V7zm0 4h12v2H2v-2z"/></svg>
+        </button>
+      </nav>
+    </header>
+
+    <div class="zoom" aria-label="Zoom">
+      <button type="button" id="zoomIn" aria-label="Zoom in">+</button>
+      <button type="button" id="zoomOut" aria-label="Zoom out">−</button>
+    </div>
+
+    <div id="toasts" aria-live="polite"></div>
+    <div id="announce" role="status" hidden></div>
+    <div id="conn" hidden>reconnecting…</div>
+
+    <footer class="dock" id="dock">
+      <div class="tray" id="tray" hidden>
+        <div class="tray-row">
+          <button type="button" data-emote="wave">Wave</button>
+          <button type="button" data-emote="dance">Dance</button>
+          <button type="button" data-emote="sit">Sit</button>
+          <button type="button" data-cmd="/gong">Gong</button>
+        </div>
+        <div class="tray-row reacts" id="reacts"></div>
+      </div>
+      <form id="chatForm" autocomplete="off">
+        <button type="button" class="iconbtn tray-btn" id="trayBtn" aria-label="Emotes and reactions" aria-expanded="false">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1h6v1h2v2h1v2h1v4h-1v2h-1v2h-2v1H5v-1H3v-2H2v-2H1V6h1V4h1V2h2V1zm0 5v2h2V6H5zm4 0v2h2V6H9zm-4 4v1h1v1h4v-1h1v-1H5z"/></svg>
+        </button>
+        <input id="chatInput" maxlength="240" placeholder="Say something…" enterkeyhint="send" autocomplete="off" autocorrect="on" aria-label="Chat message">
+        <button class="btn primary" id="sendBtn" type="submit">Send</button>
+      </form>
+    </footer>
+
+    <aside class="sheet" id="sheetLog" aria-label="Chat history" hidden>
+      <div class="sheet-head"><h2>Chat</h2><span class="sub">the lounge remembers the last 150 messages</span><button class="close" type="button" data-close aria-label="Close">×</button></div>
+      <ol class="log" id="log"></ol>
+    </aside>
+
+    <aside class="sheet" id="sheetFame" aria-label="Wall of fame" hidden>
+      <div class="sheet-head"><h2>Wall of Fame</h2><span class="sub" id="fameSub"></span><button class="close" type="button" data-close aria-label="Close">×</button></div>
+      <input class="search" id="fameSearch" placeholder="Search contributors" autocapitalize="none" spellcheck="false" aria-label="Search contributors">
+      <ol class="fame" id="fameList"></ol>
+    </aside>
+
+    <aside class="sheet" id="sheetWardrobe" aria-label="Wardrobe" hidden>
+      <div class="sheet-head"><h2>Your look</h2><span class="sub" id="wardrobeSub">tap to try things on</span><button class="close" type="button" data-close aria-label="Close">×</button></div>
+      <div class="wardrobe">
+        <div class="preview">
+          <canvas id="wPreview" width="32" height="52"></canvas>
+          <div class="preview-btns">
+            <button type="button" class="btn ghost small" id="wRotate">Turn</button>
+            <button type="button" class="btn ghost small" id="wShuffle">Shuffle</button>
+          </div>
+        </div>
+        <div class="opts" id="wOpts"></div>
+      </div>
+      <div class="sheet-foot"><button type="button" class="btn primary wide" id="wSave">Looks good</button></div>
+    </aside>
+
+    <aside class="sheet small" id="sheetProfile" aria-label="Profile" hidden>
+      <button class="close" type="button" data-close aria-label="Close">×</button>
+      <div class="profile">
+        <div class="pf-avatars">
+          <canvas id="pfSprite" width="32" height="52"></canvas>
+          <img id="pfImg" alt="" width="56" height="56" referrerpolicy="no-referrer">
+        </div>
+        <div class="pf-body">
+          <h2 id="pfName"></h2>
+          <p id="pfLine1"></p>
+          <p id="pfLine2" class="muted"></p>
+        </div>
+      </div>
+      <div class="pf-actions" id="pfActions"></div>
+    </aside>
+
+    <div class="menu" id="menu" hidden>
+      <button type="button" id="mHelp">How it works</button>
+      <a href="https://github.com/thedotmack/claude-mem" target="_blank" rel="noopener noreferrer">claude-mem on GitHub</a>
+      <button type="button" id="mLogout">Log out</button>
+    </div>
+
+    <aside class="sheet" id="sheetHelp" aria-label="How it works" hidden>
+      <div class="sheet-head"><h2>How it works</h2><button class="close" type="button" data-close aria-label="Close">×</button></div>
+      <div class="help">
+        <p><b>Walk</b> — tap the floor. <b>Sit</b> — tap a chair, sofa or beanbag. <b>Pan</b> — drag. <b>Zoom</b> — pinch, scroll, or the +/− buttons.</p>
+        <p><b>Grab a drink</b> — tap the kombucha fridge or the cold brew bar. <b>The gong</b> — ring it when a PR merges. <b>The big red button</b> — deploys to prod. Obviously.</p>
+        <p><b>Tap anyone</b> to see who they are and how many PRs they've merged. The <b>wall of fame</b> on the left wall lights up a pixel for every contributor who's visited.</p>
+        <h3>Chat commands</h3>
+        <ul class="cmds">
+          <li><code>/wave</code> <code>/dance</code> <code>/sit</code> <code>/stand</code></li>
+          <li><code>/me does a thing</code> — say it in the third person</li>
+          <li><code>/w @someone hi</code> — whisper (only you two see it)</li>
+          <li><code>/who</code> — who's here · <code>/stats</code> — lounge numbers · <code>/gong</code></li>
+        </ul>
+        <p class="muted">The window shows the valley in real San Francisco time. The signs on the buildings keep rebranding. That's just how it is out there.</p>
+      </div>
+    </aside>
+
+    <div class="modal" id="modal" hidden>
+      <div class="modal-card">
+        <h2 id="modalTitle"></h2>
+        <p id="modalText"></p>
+        <div class="row gap" id="modalBtns"></div>
+      </div>
+    </div>
+  </section>
+
+  <noscript><p class="noscript">The Merge Lounge needs JavaScript.</p></noscript>
+</body>
+</html>
