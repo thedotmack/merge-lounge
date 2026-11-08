@@ -22,7 +22,7 @@ export function configTable() {
     ['blimp', `from the repo name (${code(ex.blimp)})`, `Up to ${LIMITS.blimp} characters on the blimp.`],
     ['skyline.city', `from the time zone (${code(ex.skyline.city)})`, '"The skyline runs on … time."'],
     ['skyline.names', n(D.skyline.names, 'made-up startup'), `Rooftop signs that keep rebranding, up to ${LIMITS.skylineName} characters each.`],
-    ['skyline.billboards', n(D.skyline.billboards, 'two-line billboard'), `Freeway billboards: pairs of lines, up to ${LIMITS.billboardLine} characters each.`],
+    ['skyline.billboards', n(D.skyline.billboards, 'two-line billboard'), `Freeway billboards: pairs of lines, up to ${LIMITS.billboardLine} characters each. Five show at a time, and every 45 seconds the next five come up.`],
     ['ticker', n(D.ticker, 'line'), `The LED ticker. Fills in ${['{contributors}', '{mergedPRs}', '{online}', '{gongs}', '{deploys}', '{loungeName}'].map(code).join(' ')}; ${code('{gongs:GONG}')} gives "3 GONGS".`],
     ['bot.name', code(D.bot.name), 'The resident bot. Say its name in chat and it answers.'],
     ['bot.greet', n(D.bot.greet, 'line'), `First visit. Fills in ${code('{login}')} and ${code('{merged:merged PR}')}.`],

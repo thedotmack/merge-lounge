@@ -1,14 +1,10 @@
 # Merge Lounge
 
-A pixel-art hangout for the people who've merged a PR into your GitHub repo. They check in with their
-GitHub username, walk into an isometric dev lounge, and hang out: chat, sit on the beanbags, grab a
-kombucha, ring the merge gong when something lands, and watch a made-up startup skyline drift past the window.
+**A pixel-art lounge only your merged contributors can walk into.**
 
-Only people with a merged PR in your repo get in. It's one small Node server, no database, no OAuth app.
-Fork it, change one config file, deploy it.
-
-The [claude-mem](https://github.com/thedotmack/claude-mem) lounge runs this code with
-[`examples/claude-mem.json`](examples/claude-mem.json) — copy it as a starting point for your own text.
+Your contributors are a row of avatars on a graph. Merge Lounge gives them a room. Fork it, lock it to your
+repo in one config file, and deploy it: anyone who's had a PR merged into your project can check in, walk
+around and hang out with the other people who build it. Nobody else gets in.
 
 <!-- screenshots: added in Phase 5 -->
 <!-- Screenshots live in docs/screenshots/ (room on a phone, room on a desktop, the landing page).
@@ -19,20 +15,42 @@ The [claude-mem](https://github.com/thedotmack/claude-mem) lounge runs this code
 <p><img src="docs/screenshots/landing.png" alt="The check-in page" width="520"></p>
 -->
 
+Inside there's a chat feed that stays open beside the room (under it on a phone), beanbags, a kombucha
+fridge, a merge gong to ring when something lands, a big red button that deploys to prod (it doesn't), a
+wall of fame with every contributor, and a window onto a skyline of made-up startups whose signs keep
+rebranding. A resident bot says hi at the door.
+
+**The door is the merge.** People type their GitHub username, put a one-time code in a public gist, and
+they're in, as long as your repo has merged a PR of theirs. No OAuth app, no GitHub permissions, no invite
+list to look after.
+
+**What it takes:**
+
+- **One file.** `lounge.config.json` needs your repo and your GitHub username. Your repo's name goes on the
+  neon sign and the blimp by itself.
+- **One small server.** Node, one dependency (`ws`), no database, no build step. About $4 a month on
+  Fly.io; Render, Railway or any VM with a disk work too.
+- **Public data only.** It reads merged PRs and one public gist per person. Nobody has to grant it access.
+- **Your rules.** Admins can announce, mute, kick, ban and delete someone's messages from the chat box.
+
+The [claude-mem](https://github.com/thedotmack/claude-mem) lounge runs this code. Its sign, skyline,
+ticker and bot lines are in [`examples/claude-mem.json`](examples/claude-mem.json), if you want a fully
+dressed example to start from.
+
 ## Make one for your project
 
 1. **Copy this repo.** Click **Use this template** on GitHub (or
-   [this link](https://github.com/new?template_owner=thedotmack&template_name=merge-lounge&owner=@me&name=my-merge-lounge&visibility=public&description=A+pixel+hangout+for+merged+PR+authors)),
+   [this link](https://github.com/new?template_owner=thedotmack&template_name=merge-lounge&owner=@me&name=my-merge-lounge&visibility=public&description=A+pixel-art+lounge+for+our+merged+contributors)),
    or fork it.
-2. **Edit `lounge.config.json`.** Set `repo` and `admins`. Everything else is worked out from your repo
-   name; see [`examples/claude-mem.json`](examples/claude-mem.json) for a fully customised lounge.
-   The file is already that small:
+2. **Edit `lounge.config.json`.** Set `repo` to your repo and `admins` to your GitHub username:
 
    ```json
    { "repo": "you/your-repo", "admins": ["you"] }
    ```
 
-   Want your own sign, billboards or bot lines? Add just those fields (see [Config](#config)).
+   That's a whole lounge. The neon sign, the blimp, the page title and the check-in code are made from
+   your repo's name, and everything else gets friendly default text. To write your own sign, billboards,
+   ticker or bot lines, add just those fields (see [Config](#config)).
 
 3. **Deploy to Fly.io.** Install [flyctl](https://fly.io/docs/flyctl/install/) and sign in. Set your app
    name in `fly.toml` (`app = "my-merge-lounge"`), then:
@@ -47,21 +65,23 @@ The [claude-mem](https://github.com/thedotmack/claude-mem) lounge runs this code
    `--ha=false` keeps it to one machine. The lounge keeps its state in files on that one volume, so two
    machines would each have their own room.
 4. **Open the URL** Fly prints (`https://<your app name>.fly.dev`). The first boot builds your contributor
-   list in the background. It takes a minute or a few, depending on how many PRs your repo has. People can
-   check in right away; until the list is ready the server asks GitHub about each person directly.
-   Without a token the build uses most of GitHub's 10 searches a minute, so on a repo with thousands of
-   PRs, set `GITHUB_TOKEN` before the first deploy, or check-ins may hear "GitHub is busy" until it's done.
-5. **Share it.** Post the link in your README, Discord or release notes. Check in yourself first so the
-   room isn't empty.
+   list in the background, which takes a minute or a few depending on how many PRs your repo has. People
+   can check in right away: until the list is ready, the server asks GitHub about each person directly.
+   Without a token, the build uses most of GitHub's 10 searches a minute, so on a repo with thousands of
+   PRs, set `GITHUB_TOKEN` before the first deploy, or check-ins may get "GitHub didn't answer just now"
+   until it's done.
+5. **Share it.** Put the link in your README, Discord or release notes. Check in yourself first. The bot is
+   already inside, so you won't be alone.
 
 **About `GITHUB_TOKEN`:** it's optional. Without it the server uses GitHub's public limits (10 searches a
 minute), which is fine for most projects. A token with no scopes at all raises that to 30 and makes the
 first contributor list build about three times faster. Create one at
 [github.com/settings/tokens](https://github.com/settings/tokens) and leave every box unticked.
 
-**What it costs on Fly:** a `shared-cpu-1x` machine with 512 MB is about **$3.69 a month** when it runs all
-month, and a 1 GB volume about **$0.15 a month**
-([Fly pricing](https://fly.io/docs/about/pricing/)). The machine stays on so the room is always open.
+**What it costs on Fly:** Fly lists a `shared-cpu-1x` machine with 512 MB at **$3.69 a month** in its
+cheapest regions (`iad`, `ewr`; machine prices vary by region) and volumes at **$0.15 per GB a month**
+([Fly pricing](https://fly.io/docs/about/pricing/)), so this setup is about $4 a month. The machine stays on
+so the room is always open.
 
 ## How check-in works
 
@@ -98,14 +118,14 @@ usually means the file was copied from someone else's lounge). For a config that
 | `blimp` | from the repo name (`HWORLD`) | Up to 7 characters on the blimp. |
 | `skyline.city` | from the time zone (`Los Angeles`) | "The skyline runs on … time." |
 | `skyline.names` | 24 made-up startups | Rooftop signs that keep rebranding, up to 10 characters each. |
-| `skyline.billboards` | 10 two-line billboards | Freeway billboards: pairs of lines, up to 14 characters each. |
-| `ticker` | 6 lines | The LED ticker. Fills in `{contributors}` `{mergedPRs}` `{online}` `{gongs}` `{deploys}` `{loungeName}`; `{gongs:GONG}` gives "3 GONGS". |
+| `skyline.billboards` | 12 two-line billboards | Freeway billboards: pairs of lines, up to 14 characters each. Five show at a time, and every 45 seconds the next five come up. |
+| `ticker` | 10 lines | The LED ticker. Fills in `{contributors}` `{mergedPRs}` `{online}` `{gongs}` `{deploys}` `{loungeName}`; `{gongs:GONG}` gives "3 GONGS". |
 | `bot.name` | `observer` | The resident bot. Say its name in chat and it answers. |
-| `bot.greet` | 1 line | First visit. Fills in `{login}` and `{merged:merged PR}`. |
-| `bot.welcomeBack` | 1 line | Back after 30+ minutes. Fills in `{login}` and `{ago}`. |
-| `bot.mention` | 6 lines | Replies when someone mentions the bot. |
-| `bot.idle` | 6 lines | Tips it drops now and then. |
-| `bot.gong / bot.deploy` | 3 lines / 4 lines | Reactions to the gong and the big red button. |
+| `bot.greet` | 3 lines | First visit. Fills in `{login}` and `{merged:merged PR}`. |
+| `bot.welcomeBack` | 2 lines | Back after 30+ minutes. Fills in `{login}` and `{ago}`. |
+| `bot.mention` | 8 lines | Replies when someone mentions the bot. |
+| `bot.idle` | 7 lines | Tips it drops now and then. |
+| `bot.gong / bot.deploy` | 5 lines / 5 lines | Reactions to the gong and the big red button. |
 | `codePrefix` | from the blimp (`hworld-lounge`) | Start of the one-time check-in code people put in a gist. |
 | `theme.accent` | `#f26b3a` | Colour of buttons and highlights. |
 | `allow` | `[]` | Extra GitHub logins let in without a merged PR. |
@@ -113,7 +133,9 @@ usually means the file was copied from someone else's lounge). For a config that
 <!-- config-table:end -->
 
 The table is generated from `shared/config.js` (`npm run config-table`), so it always matches the code.
-Set `CONFIG_PATH` to keep the config somewhere else; the claude-mem lounge runs with
+Lettering on the sign, the skyline, the billboards, the blimp and the ticker is drawn in a 3x5 pixel font
+that has `A-Z`, `0-9`, the space and ``. , ! ? - + : / ' & $ % ( ) # @ * > < = _ | ~ " ^ [ ] ♥``; anything
+else shows as a blank. Set `CONFIG_PATH` to keep the config somewhere else; the claude-mem lounge runs with
 `CONFIG_PATH=examples/claude-mem.json`. If `REPO` is set to a different repo than the config file names,
 the file is ignored completely (so you never end up with someone else's admins or sign).
 
@@ -129,7 +151,7 @@ the file is ignored completely (so you never end up with someone else's admins o
 | `GITHUB_TOKEN` | none | Optional. Raises GitHub's search limit from 10 to 30 a minute |
 | `CLIENT_IP_HEADER` | none | The header your host's proxy writes the visitor's IP into, for per-visitor limits (Railway: `x-real-ip`, Render: `cf-connecting-ip`). It's the only header read. If it's unset, `Fly-Client-IP` is used on Fly (the server knows it's on Fly from `FLY_APP_NAME`, which Fly sets), and anywhere else no header is trusted, because a visitor could send it themselves: everyone behind the proxy then shares one, more generous, limit. |
 | `REFRESH_ON_START` | none | `1` rebuilds the contributor list a few seconds after starting |
-| `OFFLINE` | none | `1` makes no GitHub calls at all (check-in lookups answer "GitHub is down"). For the tests. |
+| `OFFLINE` | none | `1` makes no GitHub calls at all, so check-in lookups fail as if GitHub were down. For the tests. |
 
 ### The contributor list
 
@@ -150,7 +172,20 @@ repo's merged-PR total.
 ## In the lounge
 
 Tap the floor to walk, tap a chair or beanbag to sit, tap people to see their merged PRs, tap the fridge,
-the gong or the big red button. Drag to look around, pinch or scroll to zoom.
+the gong or the big red button. Drag to look around, pinch or scroll to zoom. On a first visit a short tip
+says what to tap, and the **?** button opens the full guide.
+
+- **Chat:** on a wide screen the feed is pinned beside the room (the chat button hides it and counts
+  what you missed). On a phone the last three lines sit above the message box; tap them for the whole
+  feed with the box still there. Command results and notices go into the feed too.
+- **People:** the count at the top lists everyone inside. Tap someone for their card: wave at them (they
+  get a notice), whisper, or open their PRs on GitHub.
+- **Your look:** the shirt button opens the wardrobe: hairstyles, tops, colours, and extras like glasses,
+  hats and headphones.
+- **Day and night:** the room follows the time of day in your `timezone`, with sunlight through the window
+  by day and lamps, screens and the neon sign glowing after dark.
+- **Reduced motion:** with *reduce motion* turned on in the system settings, the room and the skyline hold
+  still: no screen shake or flashes, and the ticker pages instead of scrolling.
 
 Chat commands for everyone: `/wave` `/dance` `/sit` `/stand` `/me …` `/w @user …` (whisper) `/who`
 `/stats` `/gong` `/afk` `/help`
@@ -220,14 +255,23 @@ config and a tiny fake contributor list, so they never touch your real state. `T
 keeps them inside a port range. CI (`.github/workflows/ci.yml`) syntax-checks every JS file and runs
 `OFFLINE=1 npm test`.
 
-## How it's built
+## How it fits together
 
-- One Node process (Node 20 or newer): static files, a small JSON API and one WebSocket room. The only
-  dependency is `ws`. No build step.
-- No database: a few JSON files in `STATE_DIR`, written atomically.
-- All the art is drawn in code, with no image assets besides the favicon. Fonts: Silkscreen, Pixelify Sans and IBM Plex Mono (OFL,
-  in `public/fonts`).
-- `shared/world.js` (the room) and `shared/config.js` (the settings) are used by both the server and the browser.
+One Node process (Node 20 or newer) serves the files, a small JSON API and one WebSocket room. The only
+dependency is `ws`, there's no build step, and there's no database: the state is a few JSON files in
+`STATE_DIR`, written atomically.
+
+- `server.js` is the entry point: check-in (`/api/auth/start` and `/api/auth/verify`), the room over
+  WebSocket, chat commands, the resident bot, and the daily contributor-list rebuild.
+- `scripts/fetch-contributors.js` builds the contributor list; the server runs it in a child process.
+- `public/app.js` is the browser side: the landing page, check-in, and everything around the room (the
+  chat feed, the panels, the top bar) plus the WebSocket that keeps it live.
+- `public/engine.js` draws the room, `public/valley.js` the skyline out the window, `public/avatar.js` the
+  people, and `public/pixel.js` has the drawing helpers and the 3x5 pixel font. All the art is drawn in
+  code; there are no image assets besides the favicon.
+- `shared/world.js` (the room's layout, furniture and wardrobe) and `shared/config.js` (the settings and
+  their defaults) are used by both the server and the browser.
+- Fonts: Silkscreen, Pixelify Sans and IBM Plex Mono (OFL, in `public/fonts`).
 
 ## License
 

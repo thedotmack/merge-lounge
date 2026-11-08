@@ -522,7 +522,8 @@ function buildFame(list) {
   }
   return c;
 }
-// the board's lettering, drawn upright on the wall by wallText()
+// the board's lettering, drawn upright on the wall by wallText(). "N MERGED" counts people (one pixel
+// each), not PRs; "N CONTRIBUTORS" would run past the 57 px board in the 3x5 font.
 function fameText(list) {
   const label = `${list ? list.length : 0} MERGED`;
   return [
@@ -732,6 +733,14 @@ function prefersReducedMotion() {
 }
 
 // ------------------------------------------------------------------ engine
+// The contract with app.js, which owns the render loop and the WebSocket and writes room state straight
+// into the engine. Keep all of these when changing it (new methods are fine; app.js calls optional
+// ones as engine.x?.()):
+// - methods: render(t), resize(), invalidate(), setPaused(on), setReducedMotion(on), setBubblesHidden(on),
+//   setFame(list), addBubble(uid, text, kind, extra), addReact(uid, emoji), addFx(kind, data),
+//   pick(dxDev, dyDev), posOf(user, t), snapTo(gx, gy), zoomBy(step, anchorDx, anchorDy), panBy(dxCss, dyCss);
+// - fields: users (id → person), selfId, stats, insets { top, bottom }, dpr, bubbles, follow, target,
+//   hoverTile, hoverLabel, joinedAt.
 export class Engine {
   // opts.config: the lounge config from /api/config (lettering, bot name, time zone)
   constructor(canvas, opts = {}) {

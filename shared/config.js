@@ -14,35 +14,54 @@ export const DEFAULTS = {
   blimp: '',
   skyline: {
     city: '',
+    // Each rooftop sign walks this list in order as it "rebrands" (the old name glitches into the next), so
+    // the list reads as one startup's life story on a loop: stealth, waitlist, … acquihire, stealth again.
     names: [
-      'TOKENLY', 'CTXBASE', 'VECTORLY', 'PROMPTCO', 'AGI SOON', 'GPU BARN', 'FORKLY', 'LGTM CAP',
-      'SHIPIT', '10X LABS', 'RAGTAG', 'EVALS4U', 'DIFFCO', 'HOTFIX', 'SERIES Z', 'INFER.IO',
-      'STEALTH', 'YOLO OPS', 'MERGEINC', 'NEURALLY', 'COMPUTE+', 'PIVOTLY', 'ATTENTIO', 'WEIGHTS',
+      'STEALTH', 'WAITLIST', 'DEMOWARE', 'PRE-REV', 'SERIES A', 'GPU BARN', 'WRAPPER', 'PLATFORM',
+      'AGENTIC', '10X-ISH', 'MONOREPO', 'YOLO OPS', 'HOTFIX', 'TECH DEBT', 'LGTM CAP', 'FLAKY CI',
+      'SERIES Z', 'BURN RATE', 'PIVOT 9', 'AI AI AI', 'OPEN-ISH', 'AGI SOON', 'DOWNROUND', 'ACQUIHIRE',
     ],
+    // Five freeway billboards show at a time; every 45 s they move on to the next five pairs (valley.js),
+    // so the whole list comes round.
     billboards: [
-      ['READ THE', 'DOCS'], ['WORKS ON', 'MY MACHINE'], ['TESTS', 'PASSING*'],
-      ['HIRING: 10X', 'PROMPTER'], ['SHIP ON', 'FRIDAYS'], ['FIRST PR?', 'WELCOME!'],
-      ['AGI BY Q3', '(MAYBE)'], ['MERGED >', 'PERFECT'], ['LGTM', 'SHIP IT'], ['ZERO-SHOT', 'ZERO SLEEP'],
+      ['HIRING: 10X', 'PROMPTER'], ['CODE REVIEW', 'IN 6-8 WEEKS'], ['ZERO-SHOT', 'ZERO SLEEP'],
+      ['NOW WITH', 'AGENTS'], ['OPEN WEIGHTS.', 'CLOSED DOORS.'], ['$1B VALUATION', '$0 REVENUE'],
+      ['MERGED >', 'PERFECT'], ['WORKS GREAT', 'IN THE DEMO'], ['AGI BY Q3', '(MAYBE)'],
+      ['TESTS', 'PASSING*'], ['100% ACCURATE', 'SOURCE: ME'], ['NOW HIRING:', 'ONE HUMAN'],
     ],
   },
   ticker: [
     '{contributors} MERGED CONTRIBUTORS',
     '{mergedPRs} PRS MERGED',
+    'WAITLIST NOW HAS A WAITLIST',
     '{online} IN THE LOUNGE',
+    'STEALTH ANNOUNCES IT IS STILL IN STEALTH',
     '{gongs:GONG} TODAY',
+    'LGTM CAP APPROVES DEAL WITHOUT OPENING IT',
     '{deploys:DEPLOY} TO PROD TODAY',
+    'PIVOT 9 PIVOTS TO PIVOT 10',
     'WELCOME TO THE {loungeName}',
   ],
   bot: {
     name: 'observer',
-    greet: ['welcome to the lounge, @{login} — {merged:merged PR}. make yourself at home.'],
-    welcomeBack: ['welcome back, @{login}. last seen {ago}.'],
+    // greet and welcomeBack must read right for anyone: an `allow`-listed guest has 0 merged PRs.
+    greet: [
+      'welcome in, @{login} — {merged:merged PR}. make yourself at home.',
+      '@{login} just walked in. {merged:merged PR} and counting.',
+      'new face: @{login} ({merged:merged PR}). pick a beanbag.',
+    ],
+    welcomeBack: [
+      'welcome back, @{login}. last seen {ago}.',
+      '@{login} is back. your beanbag missed you.',
+    ],
     mention: [
       'beep. still here.',
       'noted.',
       "i've read every merged PR in this repo. yes, even that one.",
       'try /stats if you want the receipts.',
-      'i only speak in merged PRs.',
+      'my opinions are a config file.',
+      "you rang? that's the gong's job.",
+      "i'd help, but my whole job is standing near the beanbags.",
       'ask me again after the next release.',
     ],
     idle: [
@@ -52,9 +71,22 @@ export const DEFAULTS = {
       'tip: /dance exists.',
       'tip: the wall of fame (left wall) lists every merged contributor.',
       'tip: whisper with /w @someone your message.',
+      "tip: the big red button deploys to prod. it doesn't.",
     ],
-    gong: ['🔔 shipped. noted.', 'merge energy detected.', 'another one in the books.'],
-    deploy: ['rolling back… jk.', 'on-call has been paged. (it is you.)', '🔥 this is fine 🔥', 'ship it. ship it all.'],
+    gong: [
+      '🔔 shipped. noted.',
+      'merge energy detected.',
+      'another one in the books.',
+      'LGTM, retroactively.',
+      "somebody's PR just became everybody's problem.",
+    ],
+    deploy: [
+      'rolling back… jk.',
+      'on-call has been paged. (it is you.)',
+      'no tests were harmed in this deploy. none were run.',
+      'deploy complete. rollback plan: vibes.',
+      'ship it. ship it all.',
+    ],
   },
   codePrefix: '',
   theme: { accent: '#f26b3a' },

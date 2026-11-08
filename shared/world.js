@@ -1,4 +1,6 @@
-// Shared world definition — imported by both the server (Node) and the browser.
+// The room itself: its grid, the furniture and wall pieces, the wardrobe lists and pathfinding.
+// Imported by both the server (Node), which decides where people walk and sit, and the browser,
+// which draws the same room, so the two always agree.
 // Grid coordinates: x grows toward the screen's lower-right, y toward the lower-left.
 // Back walls run along x = 0 (left wall) and y = 0 (window wall).
 
@@ -98,7 +100,7 @@ export const WINDOW = { a: 0.35, b: 15.65, lo: 10, hi: 80 }; // the glass on the
 export const REACTIONS = ['🔥', '🚀', '🧠', '❤️', '😂', '👀', '🎉', '💯'];
 export const ITEMS = ['kombucha', 'coldbrew'];
 
-// Avatar wardrobe — indexes into these lists are what gets stored, so lists only ever grow
+// The wardrobe ("Your look"). Indexes into these lists are what gets stored, so lists only ever grow
 // at the end. Never reorder or remove an entry: saved looks would change.
 export const LOOK = {
   skin: ['#f7d5b5', '#e9b48a', '#c98b5e', '#9c6440', '#6e4428', '#ffe0c4',

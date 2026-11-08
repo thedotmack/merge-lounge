@@ -82,6 +82,9 @@ export function rgba(h, a) {
 }
 
 // ---- 3x5 bitmap font (row-major, 3 wide x 5 tall) ----
+// All the lettering in the art uses it: the neon sign, ticker, skyline signs, billboards, blimp and the
+// wall signs. A character that isn't here draws as a blank, so the README lists this set for config
+// writers; add a glyph here and to that list together.
 const G = {
   'A': '.#.#.#####.##.#',
   'B': '##.#.###.#.###.',

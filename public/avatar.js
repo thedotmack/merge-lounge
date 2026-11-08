@@ -617,7 +617,7 @@ function hairTop(style) {
 const HIP_Y = 34; // top of the 3 hip rows
 const SHOULDER_Y = 23;
 // How far the body drops when sitting. They pair with engine.js, which lifts a seated sprite
-// by SEAT_H[kind] - 4 (SEAT_H at engine.js:40, the lift in Engine.spriteFor at engine.js:682)
+// by SEAT_H[kind] - 4 (SEAT_H near the top of engine.js, the lift in Engine._spriteInto)
 // or by -2 on the floor: change one side and seated people float or sink into the furniture.
 const SIT_DROP = 7; // 'sit': the last hip row, HIP_Y + SIT_DROP + 2 = 43, rests on the seat
 const SITF_DROP = 9; // 'sitf': the crossed legs rest on the floor
