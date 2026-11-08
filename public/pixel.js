@@ -208,10 +208,12 @@ export function seededRng() {
   return next;
 }
 
-export function makeCanvas(w, h) {
+// readback: the canvas will be read with getImageData (picking, bounds), so the browser keeps it in
+// memory it can read cheaply ({ willReadFrequently }). Only for the canvases that are read.
+export function makeCanvas(w, h, { readback = false } = {}) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', readback ? { willReadFrequently: true } : undefined);
   g.imageSmoothingEnabled = false;
   return [c, g];
 }

@@ -83,7 +83,7 @@ function commit(inner, outer, mode = 2, minInnerY = -99) {
   for (let i = 0; i < N; i++) if (part[i] !== -1) { main[i] = part[i]; ink[i] = 0; }
 }
 function toCanvas(flip) {
-  const [cv, g] = makeCanvas(AV_W, AV_H);
+  const [cv, g] = makeCanvas(AV_W, AV_H, { readback: true }); // the room reads it for picking and the name-tag line
   const img = g.createImageData(AV_W, AV_H);
   const d = img.data;
   for (let y = 0; y < AV_H; y++) for (let x = 0; x < AV_W; x++) {

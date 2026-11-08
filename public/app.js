@@ -81,7 +81,8 @@ const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2
 
 // Toasts: at most three, and the same text never twice at once (a repeat just stays up longer).
 // quiet: the same words were already read out from the chat (readOut), so screen readers don't hear them twice.
-function toast(text, ms = 3200, { quiet = false } = {}) {
+// offline: a notice about the connection, dropped as soon as the room is back (setOffline)
+function toast(text, ms = 3200, { quiet = false, offline = false } = {}) {
   const box = $('#toasts');
   if (!box) return;
   for (const el of box.children) {
@@ -97,6 +98,7 @@ function toast(text, ms = 3200, { quiet = false } = {}) {
   const el = document.createElement('div');
   el.className = 'toast';
   if (quiet) el.setAttribute('aria-hidden', 'true');
+  if (offline) el.dataset.offline = '';
   el.textContent = text;
   box.appendChild(el);
   while (box.children.length > 3) box.firstChild.remove();
@@ -249,8 +251,16 @@ async function refreshLive() {
   } catch { /* offline */ }
 }
 
+// The first card rises in with the page. After that, steps swap in place quickly (.swap), so the code or
+// the "no merged PRs" card isn't blank for a second while someone reads it.
+let stepShown = false;
 function showStep(id) {
-  for (const s of ['step1', 'step2', 'stepNo']) $('#' + s).hidden = s !== id;
+  for (const s of ['step1', 'step2', 'stepNo']) {
+    const el = $('#' + s);
+    el.hidden = s !== id;
+    el.classList.toggle('swap', stepShown);
+  }
+  stepShown = true;
 }
 function savedChallenge() {
   try { return JSON.parse(ls.get(CHALLENGE_KEY) || 'null'); } catch { return null; }
@@ -669,6 +679,7 @@ function setOffline(on) {
   sb.setAttribute('aria-disabled', on ? 'true' : 'false');
   sb.textContent = on ? 'Offline' : 'Send';
   $('#chatInput').placeholder = on ? 'Offline — your text waits here' : 'Say something…';
+  if (!on) for (const el of $$('#toasts [data-offline]')) { clearTimeout(el._t); dropToast(el); }
 }
 
 // Back to the landing page: stop the room completely (socket, loop) and say why.
@@ -1027,7 +1038,7 @@ function showAnnouncement(login, text) {
 // ------------------------------------------------------------------ first-visit tips
 function setupCoach() {
   $('#hintClose').addEventListener('click', () => hintDone());
-  $('#lookNudgeGo').addEventListener('click', () => openWardrobe(true));
+  opensSheet($('#lookNudgeGo'), () => openWardrobe(true), $('#btnWardrobe')); // the nudge is gone by then
   $('#lookNudgeClose').addEventListener('click', () => nudgeDone());
 }
 function startCoach() {
@@ -1219,7 +1230,7 @@ function setupDock() {
     if (text === '/help') { input.value = ''; openSheet('sheetHelp'); return; }
     // offline or still connecting: nothing is sent and nothing is lost; the text stays in the box
     if (!state.connected || !send({ t: 'chat', text })) {
-      toast(state.offline ? "You're offline. Your message is still in the box — send it again once you're back." : 'Still connecting — try again in a moment.');
+      toast(state.offline ? "You're offline. Your message is still in the box — send it again once you're back." : 'Still connecting — try again in a moment.', 3200, { offline: true });
       return;
     }
     input.value = '';
@@ -1259,7 +1270,9 @@ function setTyping(on) {
 
 // ------------------------------------------------------------------ sheets (dialogs) & the menu
 const SHEETS = ['sheetPeople', 'sheetFame', 'sheetWardrobe', 'sheetProfile', 'sheetHelp'];
-const dlg = { trigger: null };
+// trigger: where focus goes back when the sheets close. opener: the button being clicked right now, if it
+// opens a sheet (see opensSheet).
+const dlg = { trigger: null, opener: null };
 function isOpen(id) { return !$('#' + id).hidden; }
 function anySheetOpen() { return SHEETS.some(isOpen); }
 // Phones: a sheet covers the room and the chat, so it's a modal dialog and Tab stays inside it. Wide
@@ -1281,7 +1294,8 @@ function rememberFocus() {
   return a;
 }
 function openSheet(id) {
-  if (!anySheetOpen()) dlg.trigger = rememberFocus();
+  if (dlg.opener) dlg.trigger = dlg.opener;
+  else if (!anySheetOpen()) dlg.trigger = rememberFocus();
   if (id !== 'sheetWardrobe' && isOpen('sheetWardrobe')) cancelWardrobe();
   for (const s of SHEETS) $('#' + s).hidden = s !== id;
   closeMenu(false);
@@ -1292,15 +1306,16 @@ function openSheet(id) {
 }
 function closeAllSheets(restore = true) {
   const was = anySheetOpen();
-  // only take focus back if it was in the sheet (or nowhere): on wide screens it may be in the chat box
+  // Focus goes back to what opened the sheet, wherever it is now (on wide screens Tab can leave the sheet,
+  // which isn't modal there), except from a text box beside it: someone typing in the chat stays put.
   const ae = document.activeElement;
-  const lost = !ae || ae === document.body || ae === $('#stage') || SHEETS.some((s) => $('#' + s).contains(ae));
+  const typing = typingIn(ae) && !SHEETS.some((s) => $('#' + s).contains(ae));
   if (isOpen('sheetWardrobe')) cancelWardrobe();
   for (const s of SHEETS) $('#' + s).hidden = true;
   $('#room').classList.remove('sheet-open', 'tall-sheet');
   const t = dlg.trigger;
   dlg.trigger = null;
-  if (!was || !restore || !lost) return;
+  if (!was || !restore || typing) return;
   if (t && t.isConnected && t.getClientRects().length) moveFocus(t);
   else focusRoom();
 }
@@ -1376,11 +1391,19 @@ function hideModal(restore = true) {
   else focusRoom();
 }
 
+// A button that opens a sheet is where focus returns when it closes. It's handed over here rather than read
+// from document.activeElement, because a click doesn't focus a button in every browser (Safari on a Mac).
+function opensSheet(btn, fn, returnTo = btn) {
+  btn.addEventListener('click', (ev) => {
+    dlg.opener = returnTo;
+    try { fn(ev); } finally { dlg.opener = null; }
+  });
+}
 function setupSheets() {
-  $('#btnFame').addEventListener('click', () => (isOpen('sheetFame') ? closeAllSheets() : openFame()));
-  $('#btnWardrobe').addEventListener('click', () => (isOpen('sheetWardrobe') ? closeAllSheets() : openWardrobe(false)));
-  $('#btnHelp').addEventListener('click', () => (isOpen('sheetHelp') ? closeAllSheets() : openSheet('sheetHelp')));
-  $('#onlinePill').addEventListener('click', () => (isOpen('sheetPeople') ? closeAllSheets() : openPeople()));
+  opensSheet($('#btnFame'), () => (isOpen('sheetFame') ? closeAllSheets() : openFame()));
+  opensSheet($('#btnWardrobe'), () => (isOpen('sheetWardrobe') ? closeAllSheets() : openWardrobe(false)));
+  opensSheet($('#btnHelp'), () => (isOpen('sheetHelp') ? closeAllSheets() : openSheet('sheetHelp')));
+  opensSheet($('#onlinePill'), () => (isOpen('sheetPeople') ? closeAllSheets() : openPeople()));
   $('#btnMenu').addEventListener('click', (ev) => { ev.stopPropagation(); if ($('#menu').hidden) openMenu(); else closeMenu(false); });
   $('#menu').addEventListener('keydown', (ev) => {
     if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
@@ -1390,7 +1413,7 @@ function setupSheets() {
     items[(i + (ev.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
   });
   for (const c of $$('[data-close]')) c.addEventListener('click', () => closeAllSheets());
-  $('#mHelp').addEventListener('click', () => openSheet('sheetHelp'));
+  opensSheet($('#mHelp'), () => openSheet('sheetHelp'), $('#btnMenu')); // the menu closes; its button stays
   $('#mLogout').addEventListener('click', async () => {
     closeMenu(false);
     const tok = state.token;

@@ -52,6 +52,10 @@ const CFG = loadConfig();
 const PUBLIC_CONFIG = publicConfig(CFG);
 const REPO = CFG.repo;
 const ADMINS = new Set(CFG.admins);
+if (!ADMINS.size) {
+  const file = path.relative(ROOT, CONFIG_PATH) || CONFIG_PATH;
+  console.log(`config: no admins set: add your GitHub username to "admins" in ${file.startsWith('..') ? CONFIG_PATH : file} (or set ADMINS) to get /announce, /mute, /kick and the other admin commands`);
+}
 const ALLOW = new Map(CFG.allow.map((l) => [l.toLowerCase(), l])); // let in without merged PRs
 const MIN_PRS = CFG.minMergedPRs;
 const BOT = CFG.bot;

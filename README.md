@@ -39,11 +39,15 @@ dressed example to start from.
 1. **Copy this repo.** Click **Use this template** on GitHub (or
    [this link](https://github.com/new?template_owner=thedotmack&template_name=merge-lounge&owner=@me&name=my-merge-lounge&visibility=public&description=A+pixel-art+lounge+for+our+merged+contributors)),
    or fork it.
-2. **Edit `lounge.config.json`.** Set `repo` to your repo and `admins` to your GitHub username:
+2. **Edit `lounge.config.json`.** The one you copied is a placeholder: it points at this repo
+   (`thedotmack/merge-lounge`) and has no admins. Put in your repo and your GitHub username:
 
    ```json
    { "repo": "you/your-repo", "admins": ["you"] }
    ```
+
+   Admins get `/announce`, `/mute`, `/kick` and the other [admin commands](#in-the-lounge). With `admins`
+   left empty nobody has them, and the server says so in its log when it starts.
 
    That's a whole lounge. The neon sign, the blimp, the page title and the check-in code are made from
    your repo's name, and everything else gets friendly default text. To write your own sign, billboards,
@@ -53,8 +57,8 @@ dressed example to start from.
    name in `fly.toml` (`app = "my-merge-lounge"`), then:
 
    ```sh
-   fly launch --no-deploy --copy-config --region ord
-   fly volumes create lounge_state --region ord --size 1
+   fly launch --no-deploy --copy-config --region iad
+   fly volumes create lounge_state --region iad --size 1
    fly secrets set GITHUB_TOKEN=ghp_xxx   # optional, see below
    fly deploy --ha=false
    ```
@@ -75,10 +79,12 @@ minute), which is fine for most projects. A token with no scopes at all raises t
 first contributor list build about three times faster. Create one at
 [github.com/settings/tokens](https://github.com/settings/tokens) and leave every box unticked.
 
-**What it costs on Fly:** Fly lists a `shared-cpu-1x` machine with 512 MB at **$3.69 a month** in its
-cheapest regions (`iad`, `ewr`; machine prices vary by region) and volumes at **$0.15 per GB a month**
-([Fly pricing](https://fly.io/docs/about/pricing/)), so this setup is about $4 a month. The machine stays on
-so the room is always open.
+**What it costs on Fly:** the commands above use `iad` (Ashburn, Virginia), one of Fly's two cheapest
+regions. There Fly lists a `shared-cpu-1x` machine with 512 MB at **$3.69 a month**, and volumes cost
+**$0.15 per GB a month** ([Fly pricing](https://fly.io/docs/about/pricing/), checked November 2026), so this
+setup is about $4 a month. The machine stays on so the room is always open. Other regions can cost more for
+the machine. To run somewhere else, change `--region` in both commands and `primary_region` in `fly.toml` to
+the same region.
 
 ## How check-in works
 
@@ -109,7 +115,7 @@ usually means the file was copied from someone else's lounge). For a config that
 | `project.name` | the repo name (`hello-world`) | Used in the copy: "a merged PR in …", profiles, page title. |
 | `project.url` | `https://github.com/you/hello-world` | Footer and menu link. Must start with `https://`. |
 | `project.tagline` | empty | Shown when someone taps the neon sign. |
-| `admins` | `[]` | GitHub logins with admin commands. The `ADMINS` env var (comma-separated) overrides it. |
+| `admins` | `[]` | GitHub logins with admin commands (`/announce`, `/mute`, `/kick` …). With none, nobody has them and the server says so when it starts. The `ADMINS` env var (comma-separated) overrides it. |
 | `timezone` | `America/Los_Angeles` | IANA time zone for the window's day and night, the daily counters and the 4am contributor refresh. |
 | `neon.top / neon.bottom` | from the repo name (`HELLO` / `WORLD`) | The neon sign. Top line up to 11 characters; the bottom line is drawn big at 4 characters or fewer. |
 | `blimp` | from the repo name (`HWORLD`) | Up to 7 characters on the blimp. |
@@ -117,7 +123,7 @@ usually means the file was copied from someone else's lounge). For a config that
 | `skyline.names` | 24 made-up startups | Rooftop signs that keep rebranding, up to 10 characters each. |
 | `skyline.billboards` | 12 two-line billboards | Freeway billboards: pairs of lines, up to 14 characters each. Five show at a time, and every 45 seconds the next five come up. |
 | `ticker` | 10 lines | The LED ticker. Fills in `{contributors}` `{mergedPRs}` `{online}` `{gongs}` `{deploys}` `{loungeName}`; `{gongs:GONG}` gives "3 GONGS". |
-| `bot.name` | `observer` | The resident bot. Say its name in chat and it answers. |
+| `bot.name` | `doorbot` | The resident bot. Say its name in chat and it answers. |
 | `bot.greet` | 3 lines | First visit. Fills in `{login}` and `{merged:merged PR}`. |
 | `bot.welcomeBack` | 2 lines | Back after 30+ minutes. Fills in `{login}` and `{ago}`. |
 | `bot.mention` | 8 lines | Replies when someone mentions the bot. |

@@ -16,7 +16,7 @@ export function configTable() {
     ['project.name', `the repo name (${code(ex.project.name)})`, 'Used in the copy: "a merged PR in …", profiles, page title.'],
     ['project.url', code(ex.project.url), 'Footer and menu link. Must start with `https://`.'],
     ['project.tagline', 'empty', 'Shown when someone taps the neon sign.'],
-    ['admins', code('[]'), `GitHub logins with admin commands. The ${code('ADMINS')} env var (comma-separated) overrides it.`],
+    ['admins', code('[]'), `GitHub logins with admin commands (${code('/announce')}, ${code('/mute')}, ${code('/kick')} …). With none, nobody has them and the server says so when it starts. The ${code('ADMINS')} env var (comma-separated) overrides it.`],
     ['timezone', code(D.timezone), 'IANA time zone for the window\'s day and night, the daily counters and the 4am contributor refresh.'],
     ['neon.top / neon.bottom', `from the repo name (${code(ex.neon.top)} / ${code(ex.neon.bottom)})`, `The neon sign. Top line up to ${LIMITS.neonTop} characters; the bottom line is drawn big at 4 characters or fewer.`],
     ['blimp', `from the repo name (${code(ex.blimp)})`, `Up to ${LIMITS.blimp} characters on the blimp.`],

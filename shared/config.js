@@ -43,7 +43,8 @@ export const DEFAULTS = {
     'WELCOME TO THE {loungeName}',
   ],
   bot: {
-    name: 'observer',
+    // chat history refers to the bot as bot:<name>, so a running lounge should keep the name it started with
+    name: 'doorbot',
     // greet and welcomeBack must read right for anyone: an `allow`-listed guest has 0 merged PRs.
     greet: [
       'welcome in, @{login} — {merged:merged PR}. make yourself at home.',
