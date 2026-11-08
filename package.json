@@ -7,7 +7,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/config.test.mjs test/search-windows.test.mjs && node test/smoke.mjs && node test/fuzz.mjs",
+    "test": "node --test test/config.test.mjs test/search-windows.test.mjs test/look.test.mjs && node test/smoke.mjs && node test/fuzz.mjs",
     "contributors": "node scripts/fetch-contributors.js",
     "config-table": "node scripts/config-table.js"
   },
