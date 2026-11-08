@@ -6,14 +6,11 @@ Your contributors are a row of avatars on a graph. Merge Lounge gives them a roo
 repo in one config file, and deploy it: anyone who's had a PR merged into your project can check in, walk
 around and hang out with the other people who build it. Nobody else gets in.
 
-<!-- screenshots: added in Phase 5 -->
-<!-- Screenshots live in docs/screenshots/ (room on a phone, room on a desktop, the landing page).
 <p>
-  <img src="docs/screenshots/room-phone.png" alt="The lounge on a phone" width="260">
-  <img src="docs/screenshots/room-desktop.png" alt="The lounge on a desktop, with the chat feed" width="520">
+  <img src="docs/screenshots/room-desktop.png" alt="A demo scene in the claude-mem lounge on a desktop: made-up visitors chatting in speech bubbles around the sofa, the gong and the bar, with the chat feed pinned on the right" width="636">
+  <img src="docs/screenshots/room-phone.png" alt="The same demo scene on a phone, zoomed in on the lounge pit, with the last three chat lines above the message box" width="184">
 </p>
-<p><img src="docs/screenshots/landing.png" alt="The check-in page" width="520"></p>
--->
+<p><img src="docs/screenshots/landing.png" alt="The claude-mem lounge's check-in page over the pixel skyline, with live counts from a demo contributor list" width="636"></p>
 
 Inside there's a chat feed that stays open beside the room (under it on a phone), beanbags, a kombucha
 fridge, a merge gong to ring when something lands, a big red button that deploys to prod (it doesn't), a
