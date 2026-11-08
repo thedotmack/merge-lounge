@@ -30,6 +30,8 @@ shapes.push({ t: 'move', x: { valueOf: 1 }, y: 2 });
 shapes.push({ t: 'move', x: '3', y: '3' });
 const raws = ['null', '1', '"s"', '[]', '[{"t":"chat"}]', '{"t":1}', '{"t":{"toString":1}}', '{"t":"__proto__"}', '{"t":"constructor"}', '{"t":"toString"}', 'not json', '\u0000'];
 const wsCases = [...shapes.map((s) => JSON.stringify(s)), ...raws];
+// the optional target of a wave (profile card "Wave"), checked on its own so the count above stays put
+const waveCases = [...vals, 'test-z', '@TEST-Z', 'bot:fuzzbot', 'nobody-here', '__proto__', 'constructor'].map((v) => JSON.stringify({ t: 'emote', e: 'wave', to: v }));
 
 function runWsCase(payload) {
   return new Promise((resolve) => {
@@ -109,6 +111,13 @@ try {
       if (!(await healthy())) { wsCrashes.push(p.slice(0, 120)); break; }
     }
     R.ok(`WebSocket fuzz: ${wsCases.length} shapes, 0 crashes`, wsCrashes.length === 0 && wsCases.length === 234, wsCrashes.length ? 'CRASH: ' + wsCrashes[0] : `${wsCases.length} cases`);
+    const waveCrashes = [];
+    for (const p of waveCases) {
+      await runWsCase(p);
+      await sleep(40);
+      if (!(await healthy())) { waveCrashes.push(p.slice(0, 120)); break; }
+    }
+    R.ok(`WebSocket fuzz: ${waveCases.length} targeted-wave shapes, 0 crashes`, waveCrashes.length === 0, waveCrashes.length ? 'CRASH: ' + waveCrashes[0] : `${waveCases.length} cases`);
     for (const [name, req] of rawCases) {
       const out = await raw(req);
       const status = (/^HTTP\/1\.1 (\d{3})/.exec(out) || [])[1] || 'closed';
