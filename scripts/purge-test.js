@@ -1,4 +1,5 @@
-// Remove every trace of "test-*" visitors (run with the server stopped).
+// Remove every trace of "test-*" visitors (their sessions, profiles and chat lines) and reset today's
+// counters. Run it with the server stopped: a running server could write its copy back over these files.
 import fs from 'node:fs';
 import path from 'node:path';
 const dir = process.env.STATE_DIR || path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'state');

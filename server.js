@@ -1,6 +1,11 @@
-// The Merge Lounge — a pixel hangout for the people who merged PRs into one GitHub repo.
-// One Node process: static files + a tiny JSON API + a WebSocket room.
-// Everything project-specific comes from lounge.config.json (see shared/config.js).
+// Merge Lounge: a pixel-art lounge that only people with a merged PR in one GitHub repo can walk into.
+// One Node process serves the static files, a small JSON API and one WebSocket room. Everything
+// project-specific comes from lounge.config.json (defaults and checks in shared/config.js).
+//
+// In order below: config → the state folder (JSON files in STATE_DIR) → the contributor list (who may
+// check in; rebuilt by scripts/fetch-contributors.js) → GitHub lookups → check-in (a one-time code the
+// person puts in a public gist; /api/auth/start and /api/auth/verify) → the room (people, walking,
+// furniture) → the resident bot → chat commands → the WebSocket protocol → HTTP routes.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -156,7 +161,7 @@ if (bootSnap.ok) {
   if (dropped) { console.log(`contributors: dropped ${dropped} live-found entr${dropped === 1 ? 'y' : 'ies'} not tagged with ${REPO}`); extraContrib.flush(); }
 }
 
-const HISTORY_MAX = 150;
+const HISTORY_MAX = 150; // chat lines kept in chat.json
 const HISTORY_SEND = 80; // the most a visitor gets on arrival (fewer when the room is new); sent as welcome.historyLimit for the chat header
 
 function todayLocal() {
@@ -205,6 +210,7 @@ function isSharedIp(ip) {
   return /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(v4) || /^(::1$|f[cd][0-9a-f]{2}:|fe80:)/i.test(ip) || ip === '?';
 }
 
+// A token bucket: up to `cap` actions in a burst, then `perSec` a second as it refills.
 class Bucket {
   constructor(cap, perSec) { this.cap = cap; this.perSec = perSec; this.tokens = cap; this.t = now(); }
   take(n = 1) {
@@ -217,6 +223,7 @@ class Bucket {
   }
 }
 const ipBuckets = new Map();
+// Check-in calls per address: 30 in a burst, then one every 2 seconds (ten times that for a shared address).
 function ipAllow(ip, cap = 30, perSec = 0.5) {
   let b = ipBuckets.get(ip);
   if (!b) { b = isSharedIp(ip) ? new Bucket(cap * 10, perSec * 10) : new Bucket(cap, perSec); ipBuckets.set(ip, b); }
@@ -448,7 +455,7 @@ function pruneChallenges() {
   for (const [n, ch] of challenges) if (t - ch.created > CHALLENGE_TTL) challenges.delete(n);
 }
 setInterval(pruneChallenges, 60_000).unref();
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L: easy to read off one screen and type on another
 function newCode() {
   const b = crypto.randomBytes(6);
   let s = '';
@@ -468,7 +475,7 @@ function sessionFor(token) {
   let s = sessions.data[k];
   if (!s && sessions.reloadIfChanged()) s = sessions.data[k];
   if (!s) return null;
-  if (now() - s.lastUsed > 120 * 86400_000) { delete sessions.data[k]; sessions.save(); return null; }
+  if (now() - s.lastUsed > 120 * 86400_000) { delete sessions.data[k]; sessions.save(); return null; } // unused for 120 days: check in again
   return s;
 }
 function revokeSessions(loginLower) {
@@ -563,6 +570,8 @@ function say(u, text, kind = 'say') {
   broadcast({ t: 'chat', ...e });
   return e;
 }
+// A line in the chat from the lounge itself ("@x rang the merge gong"). store=false: shown to whoever is
+// in the room now, not kept in the history (mute notices).
 function system(text, store = true) {
   const e = store ? addHistory({ kind: 'system', text }) : { kind: 'system', text, id: 0, ts: now() };
   broadcast({ t: 'chat', ...e });
@@ -864,7 +873,7 @@ function handleCommand(u, text) {
       return;
     }
     case 'kick': {
-      if (!target || target.npc) return note('not here');
+      if (!target || target.npc) return note('not in the lounge right now');
       const until = now() + 2 * 60_000;
       if (prof) { prof.kickedUntil = until; profiles.flush(); }
       send(sockets.get(target.id), { t: 'kicked', reason: 'kicked by an admin', until, retryIn: until - now() }); // retryIn: ms, immune to clock skew
@@ -872,7 +881,7 @@ function handleCommand(u, text) {
       return;
     }
     case 'ban': {
-      if (!prof || ADMINS.has(tKey)) return note('cannot ban that one');
+      if (!prof || ADMINS.has(tKey)) return note('cannot ban that one (never visited, or an admin)');
       prof.banned = true; profiles.flush(); revokeSessions(tKey);
       if (target) { send(sockets.get(target.id), { t: 'kicked', reason: 'banned' }); sockets.get(target.id)?.close(4003, 'banned'); }
       return note(`banned @${prof.login}`);
@@ -1003,7 +1012,7 @@ function onHello(ws, msg, ip) {
 
   let u = users.get(id);
   const t = now();
-  const returning = p.lastSeen && t - p.lastSeen > 30 * 60_000;
+  const returning = p.lastSeen && t - p.lastSeen > 30 * 60_000; // away 30+ minutes: the bot says welcome back
   const firstTime = !p.firstSeen;
   // already in the room (a second tab, or back within the grace period): nobody else saw them leave
   const resumed = !!u;
@@ -1015,7 +1024,7 @@ function onHello(ws, msg, ip) {
       id, login: p.login, look: p.look, npc: false, admin: ADMINS.has(id), merged: mergedFor(id),
       x: DOOR.x, y: DOOR.y, dir: 3, pose: 'stand', path: null, pathStart: 0, seat: null,
       item: null, itemUntil: 0, lastActive: t, afk: false, typing: false,
-      chatBucket: new Bucket(5, 0.8), actBucket: new Bucket(12, 6),
+      chatBucket: new Bucket(5, 0.8), actBucket: new Bucket(12, 6), // chat: 5 lines in a burst, then 0.8 a second; moves/emotes: 12, then 6 a second
     };
     users.set(id, u);
   }
@@ -1127,6 +1136,7 @@ function onClose(ws, state) {
   u.typing = false;
   const p = profiles.data[u.id];
   if (p) { p.lastSeen = now(); profiles.save(); }
+  // a dropped connection (a phone switching networks, a reload) gets 6 s to come back before anyone sees them leave
   u.ghostTimer = setTimeout(() => {
     if (!u.ghost) return;
     users.delete(u.id);

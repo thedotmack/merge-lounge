@@ -21,8 +21,8 @@ export const DEFAULTS = {
       'AGENTIC', '10X-ISH', 'MONOREPO', 'YOLO OPS', 'HOTFIX', 'TECH DEBT', 'LGTM CAP', 'FLAKY CI',
       'SERIES Z', 'BURN RATE', 'PIVOT 9', 'AI AI AI', 'OPEN-ISH', 'AGI SOON', 'DOWNROUND', 'ACQUIHIRE',
     ],
-    // The valley draws five billboards picked from fixed spots in this list (for 12 entries: 1, 5, 6, 9 and
-    // 10 in the room, 1, 5, 6, 8 and 11 on the landing page), so the strongest ones sit there.
+    // Five freeway billboards show at a time; every 45 s they move on to the next five pairs (valley.js),
+    // so the whole list comes round.
     billboards: [
       ['HIRING: 10X', 'PROMPTER'], ['CODE REVIEW', 'IN 6-8 WEEKS'], ['ZERO-SHOT', 'ZERO SLEEP'],
       ['NOW WITH', 'AGENTS'], ['OPEN WEIGHTS.', 'CLOSED DOORS.'], ['$1B VALUATION', '$0 REVENUE'],

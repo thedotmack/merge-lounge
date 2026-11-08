@@ -15,9 +15,10 @@ around and hang out with the other people who build it. Nobody else gets in.
 <p><img src="docs/screenshots/landing.png" alt="The check-in page" width="520"></p>
 -->
 
-Inside there's chat, beanbags, a kombucha fridge, a merge gong to ring when something lands, a big red
-button that deploys to prod (it doesn't), a wall of fame with every contributor, and a window onto a
-skyline of made-up startups whose signs keep rebranding. A resident bot says hi at the door.
+Inside there's a chat feed that stays open beside the room (under it on a phone), beanbags, a kombucha
+fridge, a merge gong to ring when something lands, a big red button that deploys to prod (it doesn't), a
+wall of fame with every contributor, and a window onto a skyline of made-up startups whose signs keep
+rebranding. A resident bot says hi at the door.
 
 **The door is the merge.** People type their GitHub username, put a one-time code in a public gist, and
 they're in, as long as your repo has merged a PR of theirs. No OAuth app, no GitHub permissions, no invite
@@ -117,7 +118,7 @@ usually means the file was copied from someone else's lounge). For a config that
 | `blimp` | from the repo name (`HWORLD`) | Up to 7 characters on the blimp. |
 | `skyline.city` | from the time zone (`Los Angeles`) | "The skyline runs on … time." |
 | `skyline.names` | 24 made-up startups | Rooftop signs that keep rebranding, up to 10 characters each. |
-| `skyline.billboards` | 12 two-line billboards | Freeway billboards: pairs of lines, up to 14 characters each. |
+| `skyline.billboards` | 12 two-line billboards | Freeway billboards: pairs of lines, up to 14 characters each. Five show at a time, and every 45 seconds the next five come up. |
 | `ticker` | 10 lines | The LED ticker. Fills in `{contributors}` `{mergedPRs}` `{online}` `{gongs}` `{deploys}` `{loungeName}`; `{gongs:GONG}` gives "3 GONGS". |
 | `bot.name` | `observer` | The resident bot. Say its name in chat and it answers. |
 | `bot.greet` | 3 lines | First visit. Fills in `{login}` and `{merged:merged PR}`. |
@@ -171,7 +172,20 @@ repo's merged-PR total.
 ## In the lounge
 
 Tap the floor to walk, tap a chair or beanbag to sit, tap people to see their merged PRs, tap the fridge,
-the gong or the big red button. Drag to look around, pinch or scroll to zoom.
+the gong or the big red button. Drag to look around, pinch or scroll to zoom. On a first visit a short tip
+says what to tap, and the **?** button opens the full guide.
+
+- **Chat:** on a wide screen the feed is pinned beside the room (the chat button hides it and counts
+  what you missed). On a phone the last three lines sit above the message box; tap them for the whole
+  feed with the box still there. Command results and notices go into the feed too.
+- **People:** the count at the top lists everyone inside. Tap someone for their card: wave at them (they
+  get a notice), whisper, or open their PRs on GitHub.
+- **Your look:** the shirt button opens the wardrobe: hairstyles, tops, colours, and extras like glasses,
+  hats and headphones.
+- **Day and night:** the room follows the time of day in your `timezone`, with sunlight through the window
+  by day and lamps, screens and the neon sign glowing after dark.
+- **Reduced motion:** with *reduce motion* turned on in the system settings, the room and the skyline hold
+  still: no screen shake or flashes, and the ticker pages instead of scrolling.
 
 Chat commands for everyone: `/wave` `/dance` `/sit` `/stand` `/me …` `/w @user …` (whisper) `/who`
 `/stats` `/gong` `/afk` `/help`
@@ -250,8 +264,8 @@ dependency is `ws`, there's no build step, and there's no database: the state is
 - `server.js` is the entry point: check-in (`/api/auth/start` and `/api/auth/verify`), the room over
   WebSocket, chat commands, the resident bot, and the daily contributor-list rebuild.
 - `scripts/fetch-contributors.js` builds the contributor list; the server runs it in a child process.
-- `public/app.js` is the browser side: the landing page, check-in, and everything around the room (chat,
-  panels, the top bar).
+- `public/app.js` is the browser side: the landing page, check-in, and everything around the room (the
+  chat feed, the panels, the top bar) plus the WebSocket that keeps it live.
 - `public/engine.js` draws the room, `public/valley.js` the skyline out the window, `public/avatar.js` the
   people, and `public/pixel.js` has the drawing helpers and the 3x5 pixel font. All the art is drawn in
   code; there are no image assets besides the favicon.

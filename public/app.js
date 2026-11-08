@@ -1,3 +1,10 @@
+// The browser side of the lounge. Two screens:
+// - the landing page and check-in: username → one-time code → public gist → a session token kept in
+//   localStorage (the server does the checking; see /api/auth/* in server.js);
+// - the room: everything around the canvas (the chat feed, top bar, sheets for people, the wall of
+//   fame, the wardrobe, profiles and help, notices and modals) plus the WebSocket that keeps it live.
+// engine.js draws the room; this file owns its render loop and writes the people and chat into it.
+// Lounge-specific words (names, links, the sign) come from GET /api/config, never from this file.
 import { Engine } from './engine.js';
 import { Valley, localHour, skyAt } from './valley.js';
 import { makeCanvas } from './pixel.js';
@@ -73,7 +80,7 @@ function showRing(el) {
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
 // Toasts: at most three, and the same text never twice at once (a repeat just stays up longer).
-// quiet: the same words already went to the chat announcer, so screen readers don't hear them twice.
+// quiet: the same words were already read out from the chat (readOut), so screen readers don't hear them twice.
 function toast(text, ms = 3200, { quiet = false } = {}) {
   const box = $('#toasts');
   if (!box) return;
@@ -117,7 +124,7 @@ function setLink(a, href, text) {
 function applyConfig() {
   const c = CFG, proj = c.project.name;
   document.title = `${c.loungeName} · ${proj}`;
-  $('meta[name="description"]')?.setAttribute('content', `A pixel hangout for everyone with a merged PR in ${proj}.`);
+  $('meta[name="description"]')?.setAttribute('content', `A pixel-art lounge for everyone who's merged a PR into ${proj}.`);
   if (/^#[0-9a-f]{6}$/i.test(c.theme.accent)) {
     document.documentElement.style.setProperty('--accent', c.theme.accent);
     document.documentElement.style.setProperty('--accent-ink', accentInk(c.theme.accent)); // readable on any accent
@@ -133,7 +140,14 @@ function applyConfig() {
   setLink($('#findIssue'), githubUrl() ? `${githubUrl()}/issues` : '');
   const onGitHub = /^https:\/\/github\.com\//i.test(c.project.url);
   for (const a of $$('a.cfg-home')) setLink(a, c.project.url, onGitHub ? `${proj} on GitHub` : `${proj} ↗`);
+  // the "not yet" card: someone under minMergedPRs may have some merged PRs, just not enough
+  const several = c.minMergedPRs > 1;
+  for (const el of $$('.cfg-need')) el.textContent = needPRs();
+  for (const el of $$('.cfg-need-none')) el.textContent = several ? 'Not enough merged PRs for' : 'No merged PRs found for';
+  for (const el of $$('.cfg-need-then')) el.textContent = several ? 'Come back when you have them' : 'Get one merged and come back';
 }
+// what it takes to get in, in words: "a merged PR" or "3 merged PRs"
+const needPRs = () => (CFG.minMergedPRs > 1 ? `${fmt(CFG.minMergedPRs)} merged PRs` : 'a merged PR');
 const botName = () => CFG.bot.name;
 const rackLabel = (f) => `${botName().toUpperCase()}-${String(f?.label || '').match(/\d+$/)?.[0] || '01'}`;
 
@@ -278,7 +292,7 @@ async function startCheckIn(raw, { resume = false } = {}) {
     } else if (r.reason === 'banned') {
       $('#err1').textContent = "This account can't check in.";
     } else if (r.reason === 'slow-down') {
-      $('#err1').textContent = 'Easy — too many tries. Give it a minute.';
+      $('#err1').textContent = 'Too many tries just now. Give it a minute, then try again.';
     } else {
       $('#err1').textContent = "GitHub didn't answer just now. Try again in a minute.";
     }
@@ -395,14 +409,21 @@ $('#verifyBtn').addEventListener('click', async () => {
       }
       if (r.reason && r.reason !== 'not-found-yet') {
         st.className = 'status bad';
-        st.textContent = r.reason === 'no-challenge' ? 'That code expired — go back and check in again.' : r.reason === 'too-many-tries' ? 'Too many tries. Go back and start over.' : r.reason === 'banned' ? "This account can't check in." : r.reason === 'not-contributor' ? `GitHub doesn't show merged ${CFG.project.name} PRs for this account right now.` : 'Something went sideways. Try again.';
+        const why = {
+          'no-challenge': 'That code expired — go back and check in again.',
+          'too-many-tries': 'Too many tries. Go back and start over.',
+          'slow-down': 'Too many tries just now. Give it a minute, then try the button again.',
+          banned: "This account can't check in.",
+          'not-contributor': `GitHub doesn't show ${needPRs()} in ${CFG.project.name} for this account right now.`,
+        };
+        st.textContent = Object.hasOwn(why, r.reason) ? why[r.reason] : 'Something went wrong. Try the button again.';
         return;
       }
       await sleep(i < 3 ? 4000 : 6000);
     }
     if (verifying) {
       st.className = 'status bad';
-      st.textContent = "Still not seeing it. Make sure the gist is public and has the code in it, then tap the button again.";
+      st.textContent = "Still not seeing it. Check that the gist is public (a secret gist won't show up) and has the code in it, then try the button again.";
     }
   } catch {
     st.className = 'status bad';
@@ -620,7 +641,7 @@ function connect() {
   ws.onmessage = (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
-    handle(m);
+    onServerMessage(m);
   };
   ws.onclose = () => {
     if (state.ws !== ws) return;
@@ -677,7 +698,9 @@ function whenText(t) {
   return `at ${timeFmt.format(new Date(t))} (in about ${mins} minute${mins === 1 ? '' : 's'})`;
 }
 
-function handle(m) {
+// Every message the server sends over the WebSocket, by type (`t`). The protocol is additive: a type
+// this page doesn't know is ignored, and newer optional fields are read only when present.
+function onServerMessage(m) {
   const e = state.engine;
   switch (m.t) {
     case 'auth':
@@ -695,7 +718,7 @@ function handle(m) {
       e.users.clear();
       for (const p of m.users) e.users.set(p.id, userFromServer(p));
       setStats(m.stats);
-      // the history is a rebuild, not news: busy while it's filled, and none of it goes to the announcer
+      // the history is a rebuild, not news: busy while it's filled, and none of it is read out
       const log = $('#log');
       log.setAttribute('aria-busy', 'true');
       log.replaceChildren();
@@ -774,7 +797,7 @@ function handle(m) {
         hideBubblesFallback();
         inv();
       } else if (m.kind === 'announce') {
-        showAnnounce(m.login, m.text);
+        showAnnouncement(m.login, m.text);
       } else if (m.kind === 'system' && m.id && !feedShowing()) {
         toast(m.text, 2600, { quiet: true });
       }
@@ -800,13 +823,13 @@ function handle(m) {
       // retryIn (ms from now) doesn't care whose clock is wrong; `until` is the fallback for older servers
       const retryIn = Number(m.retryIn);
       const until = retryIn > 0 && retryIn < 864e5 ? Date.now() + retryIn : Number(m.until) > Date.now() ? Number(m.until) : Date.now() + 2 * 60_000;
-      const text = banned
-        ? "An admin banned this account from the lounge, so it can't come back in."
-        : `An admin removed you from the lounge. You can come back ${whenText(until)}.`;
+      // the modal has a title to say who; the note on the landing page afterwards stands alone
+      const bannedText = "An admin banned this account from the lounge, so it can't come back in.";
       const later = (waiting) => (waiting ? `An admin removed you from the lounge. You can come back ${whenText(until)}.`
         : 'An admin removed you from the lounge for a bit. You can come back now.');
-      const out = () => leaveRoom(banned ? { text } : { text: later, back: true, until });
-      showModal(banned ? 'Banned' : 'You got bounced', text, [{ text: 'OK', primary: true, fn: out }], out);
+      const out = () => leaveRoom(banned ? { text: bannedText } : { text: later, back: true, until });
+      showModal(banned ? 'Banned' : 'Removed by an admin', banned ? bannedText : `You can come back ${whenText(until)}.`,
+        [{ text: 'OK', primary: true, fn: out }], out);
       return;
     }
     case 'replaced': {
@@ -897,7 +920,7 @@ function linkify(parent, text) {
 // Screen readers hear new lines from this hidden live region, not from the log itself: the log is
 // rebuilt from history on every (re)connect and is hidden while the sidebar is collapsed. Join and
 // leave lines stay out of it.
-function announce(text) {
+function readOut(text) {
   const box = $('#chatLive');
   if (!box || !text) return;
   const p = document.createElement('p');
@@ -936,7 +959,7 @@ function addLog(m, live) {
       if (!x) { x = document.createElement('span'); x.className = 'x'; last.querySelector('.notice').append(x); }
       x.textContent = '×' + n;
       last.querySelector('time').textContent = timeFmt.format(new Date());
-      if (live) announce(text);
+      if (live) readOut(text);
       return;
     }
   }
@@ -978,27 +1001,27 @@ function addLog(m, live) {
   ol.appendChild(li);
   while (ol.children.length > 300) ol.firstChild.remove();
   if (atBottom || !live) ol.scrollTop = ol.scrollHeight;
-  if (live) announce(spoken(m, text));
+  if (live) readOut(spoken(m, text));
   const unread = live && !fullFeed() && countsAsUnread(m);
   if (unread) li.classList.add('unread');
   if (unread || state.unread) renderBadges(); // the cap above may have dropped unread lines
 }
 // A line just for you (command results, rate limits, "X waved at you"): into the feed, and a toast
-// only when the feed can't be seen (quiet: the announcer already read it out).
+// only when the feed can't be seen (quiet: readOut already said it).
 function notify(text) {
   addLog({ kind: 'notice', text, ts: Date.now() }, true);
   if (!feedShowing()) toast(text, 3200, { quiet: true });
 }
 
-function showAnnounce(login, text) {
+function showAnnouncement(login, text) {
   const el = $('#announce');
   el.replaceChildren();
   const s = document.createElement('small');
   s.textContent = `ANNOUNCEMENT · @${login}`;
   el.append(s, document.createTextNode(text));
   el.hidden = false;
-  clearTimeout(showAnnounce.t);
-  showAnnounce.t = setTimeout(() => { el.hidden = true; }, 12000);
+  clearTimeout(showAnnouncement.t);
+  showAnnouncement.t = setTimeout(() => { el.hidden = true; }, 12000);
 }
 
 // ------------------------------------------------------------------ first-visit tips
@@ -1163,7 +1186,7 @@ function tap(x, y) {
     }
     if (f.kind === 'rack') return toast(`${rackLabel(f)}: humming along. ${fmt(e.stats.mergedPRs)} merged PRs indexed.`);
     if (f.kind === 'arcade') return toast(f.hue === 'pink' ? 'PONG.AI — insert token. (you have plenty.)' : 'CONTEXT INVADERS — high score: whoever merged last.');
-    if (f.kind === 'plant') return toast('🪴 well watered. unlike your test suite.');
+    if (f.kind === 'plant') return toast('🪴 well watered. unlike the test suite.');
     if (f.kind === 'lavalamp') return toast('it just vibes.');
     if (f.kind === 'pingpong') return toast('🏓 first to 11. loser writes the changelog.');
     if (f.kind === 'table') return toast("someone's laptop. it's mid-rebase. don't touch it.");

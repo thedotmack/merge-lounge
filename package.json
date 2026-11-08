@@ -2,7 +2,7 @@
   "name": "merge-lounge",
   "version": "1.0.0",
   "private": true,
-  "description": "A pixel hangout for everyone with a merged PR in your GitHub repo. Fork it, edit lounge.config.json, deploy.",
+  "description": "A pixel-art lounge only your merged contributors can walk into. Fork it, lock it to your repo in one config file, deploy.",
   "type": "module",
   "main": "server.js",
   "scripts": {

@@ -1,7 +1,9 @@
-// The view out the window: a procedurally drawn "AI valley" that drifts by like a TV bumper —
-// mountains, a skyline of made-up startups whose rooftop signs keep rebranding, billboards on the
-// freeway, a blimp. The sky follows the actual time of day in the lounge's time zone.
-// The lettering (sign names, billboards, blimp) comes from the lounge config.
+// The view out the window (called "the skyline" in the app and the README; `Valley` here): a
+// procedurally drawn AI valley that drifts by like a TV bumper — mountains, a skyline of made-up
+// startups whose rooftop signs keep rebranding, billboards on the freeway, a blimp. The sky follows the
+// actual time of day in the lounge's time zone. The room draws it through the window and the landing
+// page draws it full screen behind the check-in form. The lettering (sign names, billboards, blimp)
+// comes from the lounge config (skyline.names, skyline.billboards, blimp).
 import { rng, seededRng, mix, shade, pixelText, textWidth } from './pixel.js';
 import { DEFAULTS, deriveBlimp } from '/shared/config.js';
 const NEON = ['#ff5fa2', '#33e1ff', '#ff9a3c', '#7dff8a', '#c08bff', '#ffe066'];
