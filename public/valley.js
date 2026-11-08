@@ -2,9 +2,25 @@
 // mountains, a skyline of made-up startups whose rooftop signs keep rebranding, billboards on the
 // freeway, a blimp. The sky follows the actual time of day in the lounge's time zone.
 // The lettering (sign names, billboards, blimp) comes from the lounge config.
-import { rng, mix, shade, pixelText, textWidth } from './pixel.js';
+import { rng, seededRng, mix, shade, pixelText, textWidth } from './pixel.js';
 import { DEFAULTS, deriveBlimp } from '/shared/config.js';
 const NEON = ['#ff5fa2', '#33e1ff', '#ff9a3c', '#7dff8a', '#c08bff', '#ffe066'];
+// palettes and shapes used every frame, hoisted so render() doesn't allocate them
+const PAL = [
+  ['#2d3b55', '#4b6a93'], // glass tower
+  ['#5b5458', '#7d7478'], // concrete
+  ['#25222f', '#3a3548'], // dark modern
+  ['#6a5a4a', '#8a7863'], // campus brick
+];
+const LIT = ['#ffd98a', '#fff1c1', '#9fe8ff', '#ffb36b'];
+const SIGN_DAY = ['#e63946', '#2b2d42', '#f26b3a', '#3a86ff', '#8338ec', '#2a9d8f'];
+const BOARD_DAY = ['#e63946', '#2b2d42', '#f26b3a', '#3a86ff', '#8338ec'];
+const FRONDS = [[-1, 0.2], [1, 0.2], [-0.8, -0.5], [0.8, -0.5], [0, -0.9], [-0.4, 0.6], [0.4, 0.6]];
+const GLASS_STEPS = 8;
+// The five freeway billboards move on to the next five pairs of the config list every BOARD_MS, so
+// the whole list comes round; each change flips over in BOARD_FLIP ms (no flip when told to keep still).
+export const BOARD_MS = 45000;
+const BOARD_N = 5, BOARD_FLIP = 600;
 
 // sky keyframes: hour → [top, bottom, night]
 const SKY = [
@@ -21,7 +37,16 @@ const SKY = [
   [24, '#060819', '#17123a', 1],
 ];
 
+const skyCache = new Map();
 export function skyAt(hour) {
+  const hit = skyCache.get(hour);
+  if (hit) return hit;
+  if (skyCache.size > 256) skyCache.clear();
+  const v = skyCalc(hour);
+  skyCache.set(hour, v);
+  return v;
+}
+function skyCalc(hour) {
   let i = 0;
   while (i < SKY.length - 2 && SKY[i + 1][0] <= hour) i++;
   const a = SKY[i], b = SKY[i + 1];
@@ -74,9 +99,15 @@ export class Valley {
       x += w + Math.floor(r() * 3);
     }
     this.stars = Array.from({ length: 110 }, () => ({ x: r() * this.worldW, y: r() * 0.55, p: r() * 6.28, b: r() }));
-    this.boards = Array.from({ length: 5 }, (_, i) => ({ x: 60 + i * (this.worldW / 5) + r() * 60, text: boards[(i * 5 + Math.floor(r() * 3)) % boards.length], ci: i }));
+    this.boardList = boards;
+    this.boards = Array.from({ length: BOARD_N }, (_, i) => ({ x: 60 + i * (this.worldW / BOARD_N) + r() * 60, ci: i }));
     this.palms = Array.from({ length: 7 }, (_, i) => ({ x: i * (this.worldW / 7) + r() * 70, h: 0.28 + r() * 0.16, lean: r() * 2 - 1 }));
     this.clouds = Array.from({ length: 6 }, () => ({ x: r() * this.worldW, y: 0.08 + r() * 0.25, w: 14 + Math.floor(r() * 24), s: 0.4 + r() * 0.8 }));
+    this._rng = seededRng();
+    this._textPool = [];
+    this.texts = [];
+    this._glass = new Array(GLASS_STEPS);
+    this._bands = { key: '', colors: [] };
     this.cars = Array.from({ length: 22 }, (_, i) => ({ o: r() * this.worldW, v: 18 + r() * 22, lane: i % 2, c: ['#e63946', '#f4f1de', '#3a86ff', '#2b2d42', '#ffbe0b', '#9aa0b5'][Math.floor(r() * 6)] }));
   }
 
@@ -91,17 +122,31 @@ export class Valley {
     return { name: N[idx], prev: N[(idx + N.length - 1) % N.length], glitch, gt: (t % period) / 700 };
   }
 
+  // What billboard i shows at time t (and showed before the last change); k runs 0 → 1 over the flip.
+  boardText(i, t) {
+    const list = this.boardList, L = list.length;
+    const ep = Math.max(0, Math.floor(t / BOARD_MS));
+    const at = (e) => list[(((i + e * BOARD_N) % L) + L) % L];
+    return { text: at(ep), prev: at(ep - 1), k: ep > 0 ? (t - ep * BOARD_MS) / BOARD_FLIP : 1 };
+  }
+
   // Draw into g over [0,W)x[0,H). t in ms. opts.speed in px/s of the city layer.
+  // opts.boardsAt: the clock the billboards change on (default t; the room passes its own while the
+  // view is held still for reduced motion); opts.still: change them without the flip.
   // Lettering goes through here. With opts.deferText the text is collected in this.texts
   // (flat coordinates + colour) so a sheared view can draw it upright, glyph by glyph.
   text(g, s, x, y) {
-    if (this.deferText) this.texts.push({ s, x, y, color: g.fillStyle });
-    else pixelText(g, s, x, y);
+    if (this.deferText) {
+      const i = this.texts.length;
+      const o = this._textPool[i] || (this._textPool[i] = { s: '', x: 0, y: 0, color: '' });
+      o.s = s; o.x = x; o.y = y; o.color = g.fillStyle;
+      this.texts.push(o);
+    } else pixelText(g, s, x, y);
   }
 
   render(g, W, H, t, opts = {}) {
     this.deferText = !!opts.deferText;
-    this.texts = [];
+    this.texts.length = 0;
     const hour = opts.hour ?? localHour(this.timezone);
     const sky = skyAt(hour);
     const night = sky.night;
@@ -112,10 +157,17 @@ export class Valley {
     const fwyH = Math.max(5, Math.round(H * 0.07));
     const fwyY = ground - fwyH;
 
-    // sky in 3px bands
+    // sky in 3px bands (the band colours only change with the sky, so they're cached)
     const band = H > 100 ? 4 : 3;
-    for (let y = 0; y < H; y += band) {
-      g.fillStyle = mix(sky.top, sky.bottom, Math.min(1, (y / (fwyY || 1)) ** 1.15));
+    const bkey = sky.top + sky.bottom + H + ':' + fwyY;
+    if (this._bands.key !== bkey) {
+      this._bands.key = bkey;
+      this._bands.colors.length = 0;
+      for (let y = 0; y < H; y += band) this._bands.colors.push(mix(sky.top, sky.bottom, Math.min(1, (y / (fwyY || 1)) ** 1.15)));
+      for (let k = 0; k < GLASS_STEPS; k++) this._glass[k] = mix(sky.top, '#ffffff', 0.25 + ((k + 0.5) / GLASS_STEPS) * 0.7 * 0.3);
+    }
+    for (let y = 0, k = 0; y < H; y += band, k++) {
+      g.fillStyle = this._bands.colors[k];
       g.fillRect(0, y, W, band);
     }
 
@@ -199,22 +251,46 @@ export class Valley {
         g.fillStyle = backC;
         g.fillRect(x, fwyY - h, b.w, h);
         if (night > 0.5) {
-          const r = rng(b.seed);
+          const r = this._rng.seed(b.seed);
           g.fillStyle = '#ffd98a';
           for (let wy = fwyY - h + 2; wy < fwyY - 2; wy += 3) for (let wx = x + 1; wx < x + b.w - 1; wx += 3) if (r() < 0.12) g.fillRect(wx, wy, 1, 1);
         }
       }
     }
 
-    // main city row
+    // main city row; the rooftop signs go on after the whole row, so a sign wider than its building
+    // isn't covered by the next one
     const co = scroll * 0.6;
+    const signs = this._signs || (this._signs = []);
+    let ns = 0;
     for (const b of this.buildings) {
       for (const off of [0, WW]) {
         const x = Math.floor(b.x + off - (co % WW));
         if (x > W + 30 || x + b.w < -30) continue;
-        this.building(g, b, x, fwyY, t, night, sky);
+        const top = this.building(g, b, x, fwyY, t, night, sky);
+        if (b.sign !== null) { const q = signs[ns] || (signs[ns] = { b: null, x: 0, y: 0, s: null, name: '', sx: 0, w: 0, lift: 0 }); q.b = b; q.x = x; q.y = top; ns++; }
       }
     }
+    // Neighbouring signs can be wider than their buildings and run into each other: placed left to
+    // right, a sign that would overlap one already up is raised a board higher on longer poles.
+    for (let i = 0; i < ns; i++) {
+      const q = signs[i], st = q.s = this.signName(q.b.sign, t);
+      q.name = st.glitch && st.gt < 0.5 ? st.prev : st.name;
+      q.w = textWidth(q.name) + 4;
+      q.sx = q.x + Math.round(q.b.w / 2 - (q.w - 4) / 2) - 2;
+      q.lift = 0;
+      for (let tries = 0; tries < 3; tries++) {
+        const y0 = q.y - 10 - q.lift, y1 = q.y - 1 - q.lift;
+        let hit = false;
+        for (let j = 0; j < i; j++) {
+          const o = signs[j], oy0 = o.y - 10 - o.lift, oy1 = o.y - 1 - o.lift;
+          if (q.sx < o.sx + o.w + 1 && q.sx + q.w + 1 > o.sx && y0 < oy1 && y1 > oy0) { hit = true; break; }
+        }
+        if (!hit || q.y - 19 - q.lift < 0) break; // never raised out of the top of the view
+        q.lift += 9;
+      }
+    }
+    for (let i = 0; i < ns; i++) this.sign(g, signs[i], t, night);
 
     // freeway
     const asphalt = night > 0.5 ? '#16151f' : mix('#4a4a55', sky.bottom, 0.15);
@@ -249,10 +325,15 @@ export class Valley {
 
     // billboards along the freeway
     const bbo = scroll * 0.85;
+    const bAt = opts.boardsAt ?? t, still = !!opts.still;
     for (const bb of this.boards) {
+      const st = this.boardText(bb.ci, bAt);
+      const flip = !still && st.k < 1;
+      const text = flip && st.k < 0.5 ? st.prev : st.text;
+      const blank = flip && st.k > 0.35 && st.k < 0.65; // the face mid-flip: a flash, no lettering
+      const bw = Math.max(textWidth(text[0]), textWidth(text[1])) + 6;
       for (const off of [0, WW]) {
         const x = Math.floor(bb.x + off - (bbo % WW));
-        const bw = Math.max(textWidth(bb.text[0]), textWidth(bb.text[1])) + 6;
         if (x > W || x + bw < 0) continue;
         const bh = 15;
         const by = fwyY - bh - (H > 100 ? 16 : 7);
@@ -260,12 +341,13 @@ export class Valley {
         g.fillRect(x + Math.floor(bw / 2) - 1, by + bh, 2, fwyY - by - bh);
         g.fillStyle = '#3a3640';
         g.fillRect(x - 1, by - 1, bw + 2, bh + 2);
-        g.fillStyle = night > 0.5 ? '#1b1830' : '#f4efe3';
+        g.fillStyle = blank ? (night > 0.5 ? NEON[bb.ci % NEON.length] : '#ffffff') : night > 0.5 ? '#1b1830' : '#f4efe3';
         g.fillRect(x, by, bw, bh);
-        g.fillStyle = night > 0.5 ? NEON[bb.ci % NEON.length] : ['#e63946', '#2b2d42', '#f26b3a', '#3a86ff', '#8338ec'][bb.ci % 5];
-        this.text(g, bb.text[0], x + 3, by + 2);
+        if (blank) continue;
+        g.fillStyle = night > 0.5 ? NEON[bb.ci % NEON.length] : BOARD_DAY[bb.ci % 5];
+        this.text(g, text[0], x + 3, by + 2);
         g.fillStyle = night > 0.5 ? '#f4efe3' : '#2b2d42';
-        this.text(g, bb.text[1], x + 3, by + 8);
+        this.text(g, text[1], x + 3, by + 8);
         if (night > 0.5) { // spotlight
           g.globalAlpha = 0.12; g.fillStyle = '#fff6c2'; g.fillRect(x, by, bw, 4); g.globalAlpha = 1;
         }
@@ -308,7 +390,7 @@ export class Valley {
           g.fillRect(tx, ty, 1, 1);
         }
         const fr = H > 100 ? 9 : 6;
-        for (const [ax, ay] of [[-1, 0.2], [1, 0.2], [-0.8, -0.5], [0.8, -0.5], [0, -0.9], [-0.4, 0.6], [0.4, 0.6]]) {
+        for (const [ax, ay] of FRONDS) {
           for (let i = 1; i <= fr; i++) {
             const fx = Math.round(tx + ax * i);
             const fy = Math.round(ty + ay * i * 0.7 + (i * i) / (fr * 1.6));
@@ -328,13 +410,8 @@ export class Valley {
   building(g, b, x, baseY, t, night, sky) {
     const h = Math.round(b.hf * baseY);
     const y = baseY - h;
-    const r = rng(b.seed);
-    const pal = [
-      ['#2d3b55', '#4b6a93'], // glass tower
-      ['#5b5458', '#7d7478'], // concrete
-      ['#25222f', '#3a3548'], // dark modern
-      ['#6a5a4a', '#8a7863'], // campus brick
-    ][b.kind];
+    const r = this._rng.seed(b.seed);
+    const pal = PAL[b.kind];
     let body = night > 0.5 ? shade(pal[0], -0.45) : mix(pal[0], sky.bottom, 0.12);
     const edge = night > 0.5 ? shade(pal[1], -0.5) : mix(pal[1], sky.bottom, 0.1);
     g.fillStyle = body;
@@ -343,7 +420,8 @@ export class Valley {
     g.fillRect(x, y, 1, h);
     g.fillRect(x, y, b.w, 1);
     // windows
-    const lit = ['#ffd98a', '#fff1c1', '#9fe8ff', '#ffb36b'];
+    const lit = LIT;
+    const dim = night > 0.5 ? null : shade(body, -0.25);
     for (let wy = y + 2; wy < baseY - 2; wy += 3) {
       for (let wx = x + 2; wx < x + b.w - 2; wx += b.kind === 0 ? 2 : 3) {
         const v = r();
@@ -353,7 +431,7 @@ export class Valley {
             if (!flick) { g.fillStyle = lit[Math.floor(v * 13) % 4]; g.fillRect(wx, wy, 1, 1); }
           }
         } else if (v < 0.7) {
-          g.fillStyle = b.kind === 0 ? mix(sky.top, '#ffffff', 0.25 + v * 0.3) : shade(body, -0.25);
+          g.fillStyle = b.kind === 0 ? this._glass[Math.min(GLASS_STEPS - 1, Math.floor((v / 0.7) * GLASS_STEPS))] : dim;
           g.fillRect(wx, wy, 1, b.kind === 0 ? 2 : 1);
         }
       }
@@ -364,33 +442,33 @@ export class Valley {
       g.fillRect(x + b.w - 3, y - 6, 1, 6);
       if (night > 0.3 && Math.floor(t / 900 + b.x) % 2) { g.fillStyle = '#ff3b3b'; g.fillRect(x + b.w - 3, y - 7, 1, 1); }
     }
-    if (b.sign !== null) {
-      const s = this.signName(b.sign, t);
-      const name = s.glitch && s.gt < 0.5 ? s.prev : s.name;
-      const tw = textWidth(name);
-      const sx = x + Math.round(b.w / 2 - tw / 2) - 2;
-      const sy = y - 9;
-      g.fillStyle = '#1a1820';
-      g.fillRect(sx + 2, y - 2, 1, 2);
-      g.fillRect(sx + tw, y - 2, 1, 2);
-      if (night > 0.5) {
-        g.fillStyle = '#0d0b14';
-        g.fillRect(sx, sy, tw + 4, 7);
-        const c = NEON[b.sign % NEON.length];
-        if (s.glitch) {
-          g.fillStyle = Math.floor(t / 60) % 2 ? '#ffffff' : c;
-          if (s.gt > 0.35 && s.gt < 0.65) { g.fillRect(sx, sy, tw + 4, 7); return; }
-        } else g.fillStyle = c;
-        this.text(g, name, sx + 2, sy + 1);
-        g.globalAlpha = 0.2;
-        g.fillRect(sx, sy - 1, tw + 4, 9);
-        g.globalAlpha = 1;
-      } else {
-        g.fillStyle = '#f4efe3';
-        g.fillRect(sx, sy, tw + 4, 7);
-        g.fillStyle = s.glitch && s.gt > 0.35 && s.gt < 0.65 ? '#ffffff' : ['#e63946', '#2b2d42', '#f26b3a', '#3a86ff', '#8338ec', '#2a9d8f'][b.sign % 6];
-        this.text(g, name, sx + 2, sy + 1);
-      }
+    return y;
+  }
+
+  // a building's rooftop sign, placed by render() (q: building, roof y, name, board x/width, lift)
+  sign(g, q, t, night) {
+    const b = q.b, s = q.s, name = q.name, tw = q.w - 4, sx = q.sx, y = q.y, lift = q.lift;
+    const sy = y - 9 - lift;
+    g.fillStyle = '#1a1820';
+    g.fillRect(sx + 2, y - 2 - lift, 1, 2 + lift);
+    g.fillRect(sx + tw, y - 2 - lift, 1, 2 + lift);
+    if (night > 0.5) {
+      g.fillStyle = '#0d0b14';
+      g.fillRect(sx, sy, tw + 4, 7);
+      const c = NEON[b.sign % NEON.length];
+      if (s.glitch) {
+        g.fillStyle = Math.floor(t / 60) % 2 ? '#ffffff' : c;
+        if (s.gt > 0.35 && s.gt < 0.65) { g.fillRect(sx, sy, tw + 4, 7); return; }
+      } else g.fillStyle = c;
+      this.text(g, name, sx + 2, sy + 1);
+      g.globalAlpha = 0.2;
+      g.fillRect(sx, sy - 1, tw + 4, 9);
+      g.globalAlpha = 1;
+    } else {
+      g.fillStyle = '#f4efe3';
+      g.fillRect(sx, sy, tw + 4, 7);
+      g.fillStyle = s.glitch && s.gt > 0.35 && s.gt < 0.65 ? '#ffffff' : SIGN_DAY[b.sign % 6];
+      this.text(g, name, sx + 2, sy + 1);
     }
   }
 }

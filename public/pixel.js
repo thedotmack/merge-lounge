@@ -1,21 +1,25 @@
 // Low-level pixel helpers: crisp polygon fills, lines, a 3x5 bitmap font, color math.
+// These run inside the render loop, so they avoid allocating per call where they can.
 
+const xsScratch = [];
+const byNumber = (p, q) => p - q;
 export function fillPoly(ctx, pts) {
   let minY = Infinity, maxY = -Infinity;
-  for (const p of pts) { if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; }
-  minY = Math.floor(minY); maxY = Math.ceil(maxY);
   const n = pts.length;
-  const xs = [];
+  for (let i = 0; i < n; i++) { const y = pts[i][1]; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  minY = Math.floor(minY); maxY = Math.ceil(maxY);
+  const xs = xsScratch;
   for (let y = minY; y < maxY; y++) {
     const yc = y + 0.5;
     xs.length = 0;
     for (let i = 0; i < n; i++) {
-      const a = pts[i], b = pts[(i + 1) % n];
+      const a = pts[i], b = pts[i + 1 === n ? 0 : i + 1];
       if ((a[1] <= yc && b[1] > yc) || (b[1] <= yc && a[1] > yc)) {
         xs.push(a[0] + ((yc - a[1]) * (b[0] - a[0])) / (b[1] - a[1]));
       }
     }
-    xs.sort((p, q) => p - q);
+    if (xs.length > 2) xs.sort(byNumber);
+    else if (xs.length === 2 && xs[0] > xs[1]) { const tmp = xs[0]; xs[0] = xs[1]; xs[1] = tmp; }
     for (let k = 0; k + 1 < xs.length; k += 2) {
       const xa = Math.round(xs[k]), xb = Math.round(xs[k + 1]);
       if (xb > xa) ctx.fillRect(xa, y, xb - xa, 1);
@@ -47,6 +51,7 @@ export function ellipsePts(cx, cy, rx, ry, n = 20) {
 }
 
 // ---- color ----
+const HEX2 = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
 const hexCache = new Map();
 export function hex2rgb(h) {
   let c = hexCache.get(h);
@@ -56,9 +61,9 @@ export function hex2rgb(h) {
   hexCache.set(h, c);
   return c;
 }
+const byte = (v) => (v <= 0 ? 0 : v >= 255 ? 255 : Math.round(v));
 export function rgb2hex(r, g, b) {
-  const t = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
-  return '#' + t(r) + t(g) + t(b);
+  return '#' + HEX2[byte(r)] + HEX2[byte(g)] + HEX2[byte(b)];
 }
 export function shade(h, amt) {
   // amt in [-1, 1]: negative darkens toward black, positive lightens toward white
@@ -69,6 +74,11 @@ export function shade(h, amt) {
 export function mix(a, b, t) {
   const A = hex2rgb(a), B = hex2rgb(b);
   return rgb2hex(A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t);
+}
+// '#rrggbb' + alpha → 'rgba(...)'
+export function rgba(h, a) {
+  const [r, g, b] = hex2rgb(h);
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, a)).toFixed(3)})`;
 }
 
 // ---- 3x5 bitmap font (row-major, 3 wide x 5 tall) ----
@@ -139,20 +149,35 @@ const G = {
   ']': '.##..#..#..#.##',
   '♥': '#.#######.#....',
 };
+// glyph → flat list of lit [col,row] pairs, looked up by the character as typed (upper- or lower-case)
+const LIT = new Map();
+for (const [ch, bits] of Object.entries(G)) {
+  const on = [];
+  for (let i = 0; i < 15; i++) if (bits[i] === '#') on.push(i % 3, Math.floor(i / 3));
+  LIT.set(ch, on);
+  const lo = ch.toLowerCase();
+  if (lo !== ch) LIT.set(lo, on);
+}
+const BLANK = [];
+function glyph(ch) {
+  let on = LIT.get(ch);
+  if (on) return on;
+  const up = ch.toUpperCase();
+  on = LIT.get(up) || BLANK;
+  LIT.set(ch, on);
+  return on;
+}
 
 export function textWidth(s, scale = 1) {
   return Math.max(0, String(s).length * 4 * scale - scale);
 }
 export function pixelText(ctx, s, x, y, scale = 1) {
-  s = String(s).toUpperCase();
+  if (typeof s !== 'string') s = String(s);
   x = Math.round(x); y = Math.round(y);
   for (let i = 0; i < s.length; i++) {
-    const g = G[s[i]] || G[' '];
-    for (let r = 0; r < 5; r++) {
-      for (let c = 0; c < 3; c++) {
-        if (g[r * 3 + c] === '#') ctx.fillRect(x + (i * 4 + c) * scale, y + r * scale, scale, scale);
-      }
-    }
+    const on = glyph(s[i]);
+    const gx = x + i * 4 * scale;
+    for (let k = 0; k < on.length; k += 2) ctx.fillRect(gx + on[k] * scale, y + on[k + 1] * scale, scale, scale);
   }
 }
 
@@ -165,6 +190,19 @@ export function rng(seed) {
     s ^= s << 5; s >>>= 0;
     return s / 4294967296;
   };
+}
+// The same generator, but one function you re-seed instead of allocating a closure per use:
+//   const r = seededRng(); ... r.seed(b.seed); r(); r();
+export function seededRng() {
+  let s = 1;
+  const next = () => {
+    s ^= s << 13; s >>>= 0;
+    s ^= s >>> 17;
+    s ^= s << 5; s >>>= 0;
+    return s / 4294967296;
+  };
+  next.seed = (v) => { s = v >>> 0 || 1; return next; };
+  return next;
 }
 
 export function makeCanvas(w, h) {
