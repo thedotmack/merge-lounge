@@ -3,3 +3,4 @@ state/
 *.log
 .DS_Store
 data/contributors.raw.json
+data/contributors.json

@@ -140,7 +140,7 @@ function paintPerson(g, look, o) {
       px(g, 13, 29 + dy, 8, 1, topD); // pocket
       px(g, 13, 29 + dy, 1, 3, topD);
       px(g, 20, 29 + dy, 1, 3, topD);
-      // tiny claude-mem dot on the chest
+      // tiny logo dot on the chest
       px(g, 17, 26 + dy, 2, 2, top === '#f26b3a' ? '#2b2d42' : '#f26b3a');
     } else {
       px(g, 11, 21 + dy, 10, 5, topD);

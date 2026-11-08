@@ -1,0 +1,5 @@
+node_modules
+state
+.git
+*.log
+data/contributors.raw.json

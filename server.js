@@ -1,11 +1,14 @@
-// The Merge Lounge — a pixel hangout for merged claude-mem contributors.
+// The Merge Lounge — a pixel hangout for the people who merged PRs into one GitHub repo.
 // One Node process: static files + a tiny JSON API + a WebSocket room.
+// Everything project-specific comes from lounge.config.json (see shared/config.js).
 
 import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import net from 'node:net';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
@@ -13,17 +16,70 @@ import {
   W, H, STEP_MS, DOOR, FURNITURE, REACTIONS, findPath, approachTiles, reachable,
   randomWalkable, dirFrom, cleanLook, defaultLook, isSeat, furnitureAt,
 } from './shared/world.js';
+import { resolveConfig, publicConfig, fill } from './shared/config.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
 const STATE_DIR = process.env.STATE_DIR || path.join(ROOT, 'state');
-const REPO = process.env.REPO || 'thedotmack/claude-mem';
-const ADMINS = new Set((process.env.ADMINS || 'thedotmack').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean));
+const CONFIG_PATH = process.env.CONFIG_PATH || path.join(ROOT, 'lounge.config.json');
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
-const UA = 'merge-lounge (claude-mem contributor lounge)';
-const TZ = 'America/Los_Angeles';
+const OFFLINE = process.env.OFFLINE === '1'; // tests: never call GitHub (lookups answer "github-down")
+
+// ---------------------------------------------------------------- config
+function loadConfig() {
+  let raw = {};
+  try {
+    raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch (e) {
+    if (e.code !== 'ENOENT') { console.error(`config: can't read ${CONFIG_PATH}: ${e.message}`); process.exit(1); }
+    console.log(`config: ${CONFIG_PATH} not found, using defaults`);
+  }
+  try {
+    const { config, warnings } = resolveConfig(raw, process.env, { requireRepo: true });
+    for (const w of warnings) console.log(`config: ${w}`);
+    return config;
+  } catch (e) {
+    console.error(`config: ${e.message}`);
+    process.exit(1);
+  }
+}
+const CFG = loadConfig();
+const PUBLIC_CONFIG = publicConfig(CFG);
+const REPO = CFG.repo;
+const ADMINS = new Set(CFG.admins);
+const ALLOW = new Map(CFG.allow.map((l) => [l.toLowerCase(), l])); // let in without merged PRs
+const MIN_PRS = CFG.minMergedPRs;
+const BOT = CFG.bot;
+const TZ = CFG.timezone;
+const UA = `merge-lounge (${REPO} contributor lounge)`;
 
 fs.mkdirSync(STATE_DIR, { recursive: true });
+const sameRepo = (r) => typeof r === 'string' && r.toLowerCase() === REPO.toLowerCase();
+const SNAPSHOT_FILE = path.join(STATE_DIR, 'contributors.json');
+
+// STATE_DIR/lounge.json says which repo this state belongs to. If the repo changes, sessions, chat
+// history, daily counters and people found live belonged to another lounge, so they are cleared before
+// anything loads (profiles stay: looks and bans follow the GitHub account). With no marker yet, the
+// state is adopted, unless the contributor list in it was built for another repo.
+(function claimStateDir() {
+  const marker = path.join(STATE_DIR, 'lounge.json');
+  let prev = '', from = 'lounge.json';
+  try { prev = String(JSON.parse(fs.readFileSync(marker, 'utf8')).repo || ''); } catch { /* none yet */ }
+  if (!prev) {
+    from = 'contributors.json';
+    try { const snap = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8')); if (typeof snap?.repo === 'string') prev = snap.repo; } catch { /* none */ }
+  }
+  if (prev && sameRepo(prev) && from === 'lounge.json') return;
+  if (prev && !sameRepo(prev)) {
+    for (const f of ['sessions.json', 'chat.json', 'daily.json', 'contributors-extra.json']) {
+      for (const x of [f, f + '.tmp']) { try { fs.rmSync(path.join(STATE_DIR, x), { force: true }); } catch { /* ignore */ } }
+    }
+    console.log(`state: ${STATE_DIR} was ${prev}'s lounge (says ${from}); cleared its sessions, chat history, daily counters and live-found contributors`);
+  }
+  const tmp = `${marker}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ repo: REPO, since: new Date().toISOString() }));
+  fs.renameSync(tmp, marker);
+})();
 
 // ---------------------------------------------------------------- storage
 class JsonStore {
@@ -68,22 +124,48 @@ const chatStore = new JsonStore('chat.json', { seq: 0, items: [] });
 const extraContrib = new JsonStore('contributors-extra.json', {});
 const daily = new JsonStore('daily.json', { day: '', gongs: 0, deploys: 0, messages: 0, visitors: [] });
 
-const snapshot = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'contributors.json'), 'utf8'));
+// The contributor snapshot lives in STATE_DIR and says which repo it was built for. One for another
+// repo (or none at all) is never used: a fresh one is built in the background, and until it lands
+// check-in asks GitHub about each person directly.
+function readSnapshot() {
+  let snap;
+  try { snap = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8')); }
+  catch (e) { return { ok: false, why: e.code === 'ENOENT' ? 'none yet' : `unreadable (${e.message})` }; }
+  if (!snap || !Array.isArray(snap.contributors)) return { ok: false, why: 'not a contributor list' };
+  if (!sameRepo(snap.repo)) return { ok: false, why: snap.repo ? `it is for ${snap.repo}` : 'it does not say which repo it is for' };
+  return { ok: true, snap };
+}
 const contributors = new Map();
-for (const c of snapshot.contributors) contributors.set(c.login.toLowerCase(), c);
-for (const [k, c] of Object.entries(extraContrib.data)) if (!contributors.has(k)) contributors.set(k, c);
-let totalMergedPRs = snapshot.total_merged_prs;
+let totalMergedPRs = 0;
+let snapshotState = 'missing'; // 'ready' | 'building' | 'missing'
+const bootSnap = readSnapshot();
+if (bootSnap.ok) {
+  for (const c of bootSnap.snap.contributors) if (c && typeof c.login === 'string') contributors.set(c.login.toLowerCase(), c);
+  totalMergedPRs = Number(bootSnap.snap.total_merged_prs) || 0;
+  snapshotState = 'ready';
+}
+// People found live after the snapshot, each tagged with the repo they were found in. Entries for
+// another repo, or with no tag (written before tags existed, repo unknown), are dropped: the next
+// snapshot or a live lookup finds those people again if they belong here.
+{
+  let dropped = 0;
+  for (const [k, c] of Object.entries(extraContrib.data)) {
+    if (!c || typeof c.login !== 'string' || !sameRepo(c.repo)) { delete extraContrib.data[k]; dropped++; continue; }
+    if (!contributors.has(k)) contributors.set(k, c);
+  }
+  if (dropped) { console.log(`contributors: dropped ${dropped} live-found entr${dropped === 1 ? 'y' : 'ies'} not tagged with ${REPO}`); extraContrib.flush(); }
+}
 
 const HISTORY_MAX = 150;
 
-function todayPT() {
+function todayLocal() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
-function weekdayPT() {
+function weekdayLocal() {
   return new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'long' }).format(new Date()).toLowerCase();
 }
 function rollDay() {
-  const d = todayPT();
+  const d = todayLocal();
   if (daily.data.day !== d) {
     daily.data = { day: d, gongs: 0, deploys: 0, messages: 0, visitors: [] };
     daily.save();
@@ -97,14 +179,21 @@ const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const LOGIN_RE = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/i;
 const normLogin = (s) => (typeof s === 'string' ? s : '').trim().replace(/^@/, '').replace(/^https?:\/\/github\.com\//i, '').replace(/\/.*$/, '');
 
-// The client address as the hosting proxy saw it. Fly sets Fly-Client-IP; otherwise take the last
-// X-Forwarded-For hop (the one our proxy appended), never the first (the client can write that).
+// The client address as the hosting proxy saw it. Only one header is ever read, and only one the host's
+// proxy writes itself: CLIENT_IP_HEADER if set (Railway: x-real-ip, Render: cf-connecting-ip), else
+// Fly-Client-IP when running on Fly (Fly sets FLY_APP_NAME in every Machine). Anywhere else a client
+// could send that header itself, so it is ignored. X-Forwarded-For is never trusted on its own: the
+// client writes the first hop, and on Fly the last hop is the app's own address. A value that isn't an
+// IP address falls back to the socket address.
+const CLIENT_IP_HEADER = String(process.env.CLIENT_IP_HEADER || '').trim().toLowerCase();
+const IP_HEADER = CLIENT_IP_HEADER || (process.env.FLY_APP_NAME ? 'fly-client-ip' : '');
 function clientIp(req) {
-  const fly = req.headers['fly-client-ip'];
-  let ip = typeof fly === 'string' ? fly.trim() : '';
-  if (!ip) {
-    const hops = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-    ip = hops.length ? hops[hops.length - 1] : '';
+  let ip = '';
+  if (IP_HEADER) {
+    const v = req.headers[IP_HEADER];
+    const hops = String(Array.isArray(v) ? v[v.length - 1] : v || '').slice(0, 2000).split(',').map((s) => s.trim()).filter(Boolean);
+    ip = hops.length ? hops[hops.length - 1] : ''; // a list: the entry the nearest proxy added
+    if (!net.isIP(ip)) ip = '';
   }
   if (!ip) ip = req.socket.remoteAddress || '?';
   return ip.slice(0, 64);
@@ -132,7 +221,13 @@ function ipAllow(ip, cap = 30, perSec = 0.5) {
   if (!b) { b = isSharedIp(ip) ? new Bucket(cap * 10, perSec * 10) : new Bucket(cap, perSec); ipBuckets.set(ip, b); }
   return b.take();
 }
-setInterval(() => { if (ipBuckets.size > 5000) ipBuckets.clear(); }, 60_000).unref();
+// Forget addresses whose bucket has filled back up (they carry no state); a busy one keeps its limit.
+setInterval(() => {
+  if (ipBuckets.size <= 2000) return;
+  const t = now();
+  for (const [ip, b] of ipBuckets) if (b.tokens + ((t - b.t) / 1000) * b.perSec >= b.cap) ipBuckets.delete(ip);
+  if (ipBuckets.size > 50_000) ipBuckets.clear(); // memory backstop
+}, 60_000).unref();
 
 const plural = (n, word) => `${Number(n).toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
 
@@ -148,6 +243,7 @@ function ago(ms) {
 
 // ---------------------------------------------------------------- GitHub
 async function gh(url, { api = false, timeout = 9000 } = {}) {
+  if (OFFLINE) throw new Error('OFFLINE=1: no GitHub calls');
   const headers = { 'User-Agent': UA, 'Cache-Control': 'no-cache' };
   if (api) {
     headers.Accept = 'application/vnd.github+json';
@@ -165,11 +261,21 @@ async function gh(url, { api = false, timeout = 9000 } = {}) {
 
 const negCache = new Map(); // login → time we confirmed "no merged PRs"
 
+// Who may check in: enough merged PRs, or on the config's allow list.
+function memberFor(key) {
+  const c = contributors.get(key);
+  if (c && c.merged >= MIN_PRS) return c;
+  if (ALLOW.has(key)) return c || { login: ALLOW.get(key), merged: 0, first: '', last: '' };
+  return null;
+}
+
 async function lookupContributor(rawLogin) {
   const login = normLogin(rawLogin);
   if (!LOGIN_RE.test(login)) return { ok: false, reason: 'bad-login' };
   const key = login.toLowerCase();
-  if (contributors.has(key)) return { ok: true, c: contributors.get(key) };
+  const member = memberFor(key);
+  if (member) return { ok: true, c: member };
+  if (contributors.has(key)) return { ok: false, reason: 'not-contributor', login: contributors.get(key).login }; // under minMergedPRs
   const neg = negCache.get(key);
   if (neg && now() - neg < 5 * 60_000) return { ok: false, reason: 'not-contributor', login };
   const q = encodeURIComponent(`repo:${REPO} is:pr is:merged author:${login}`);
@@ -183,9 +289,9 @@ async function lookupContributor(rawLogin) {
   if (res.status === 403 || res.status === 429) return { ok: false, reason: 'github-busy' };
   if (!res.ok) return { ok: false, reason: 'github-down' };
   const j = await res.json();
-  if (!j.total_count) { negCache.set(key, now()); return { ok: false, reason: 'not-contributor', login }; }
+  if (!j.total_count || j.total_count < MIN_PRS || !j.items?.[0]?.user) { negCache.set(key, now()); return { ok: false, reason: 'not-contributor', login }; }
   const it = j.items[0];
-  const c = { login: it.user.login, merged: j.total_count, first: (it.closed_at || '').slice(0, 10), last: (it.closed_at || '').slice(0, 10) };
+  const c = { login: it.user.login, merged: j.total_count, first: (it.closed_at || '').slice(0, 10), last: (it.closed_at || '').slice(0, 10), repo: REPO };
   contributors.set(key, c);
   extraContrib.data[key] = c;
   extraContrib.save();
@@ -218,41 +324,86 @@ async function refreshRepoTotal() {
 setTimeout(refreshRepoTotal, 15_000).unref();
 setInterval(refreshRepoTotal, 20 * 60_000).unref();
 
-// Rebuild the contributor snapshot once a day around 4am in SF (a quiet hour, because the
-// rebuild uses most of the search API's per-minute allowance for a few minutes).
-let snapshotRunning = false;
+// The snapshot is rebuilt by scripts/fetch-contributors.js in a child process: right away when there
+// is no usable one, and once a day around 4am lounge time (a quiet hour, because the rebuild uses
+// most of the search API's per-minute allowance for a few minutes).
+let snapshotChild = null;
+let snapshotRetry = null;
 let snapshotDay = '';
 function reloadSnapshot() {
-  const snap = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'contributors.json'), 'utf8'));
-  if (!Array.isArray(snap.contributors) || snap.contributors.length < contributors.size * 0.9) return false;
+  const r = readSnapshot();
+  if (!r.ok) { console.log(`contributors: new snapshot not usable: ${r.why}`); return false; }
+  const snap = r.snap;
+  if (snapshotState === 'ready' && snap.contributors.length < contributors.size * 0.9) {
+    console.log(`contributors: new snapshot has ${snap.contributors.length} people, fewer than the ${contributors.size} known, kept the old list`);
+    return false;
+  }
   for (const c of snap.contributors) {
+    if (!c || typeof c.login !== 'string') continue;
     const k = c.login.toLowerCase();
     contributors.set(k, c);
     if (extraContrib.data[k]) delete extraContrib.data[k];
   }
   extraContrib.save();
   if (snap.total_merged_prs > totalMergedPRs) totalMergedPRs = snap.total_merged_prs;
-  for (const u of users.values()) if (!u.npc) u.merged = mergedFor(u.id);
+  for (const u of users.values()) {
+    if (u.npc) continue;
+    const m = mergedFor(u.id);
+    if (m !== u.merged) { u.merged = m; broadcast({ t: 'merged', id: u.id, merged: m }); }
+  }
+  snapshotState = 'ready';
+  pushStats();
   return true;
 }
-function refreshSnapshot() {
-  if (snapshotRunning) return;
-  snapshotRunning = true;
-  const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'fetch-contributors.js')], { cwd: ROOT, env: process.env, stdio: 'ignore' });
-  child.on('error', () => { snapshotRunning = false; });
-  child.on('exit', (code) => {
-    snapshotRunning = false;
-    if (code !== 0) return console.log(`contributor refresh failed (exit ${code})`);
-    try { if (reloadSnapshot()) console.log(`contributors refreshed · ${contributors.size} contributors · ${totalMergedPRs} merged PRs`); }
-    catch (e) { console.log('contributor reload failed:', e.message); }
-  });
+function retrySnapshotLater() {
+  if (snapshotState === 'ready') return;
+  snapshotState = 'missing';
+  console.log('contributors: trying again in 30 minutes; check-in keeps using live GitHub lookups');
+  clearTimeout(snapshotRetry);
+  snapshotRetry = setTimeout(() => refreshSnapshot('retry'), 30 * 60_000);
+  snapshotRetry.unref();
+}
+function refreshSnapshot(why = 'daily') {
+  if (snapshotChild) return;
+  clearTimeout(snapshotRetry);
+  let child;
+  try {
+    child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'fetch-contributors.js'), '--repo', REPO, '--out', SNAPSHOT_FILE],
+      { cwd: ROOT, env: { ...process.env, LOUNGE_PARENT_PID: String(process.pid) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    console.log(`contributors: could not start the rebuild: ${e.message}`);
+    retrySnapshotLater();
+    return;
+  }
+  snapshotChild = child;
+  if (snapshotState !== 'ready') snapshotState = 'building';
+  console.log(`contributors: rebuilding the snapshot for ${REPO} (${why})`);
+  for (const s of [child.stdout, child.stderr]) readline.createInterface({ input: s }).on('line', (l) => console.log(`contributors: ${l}`));
+  let done = false;
+  const finish = (code) => {
+    if (done) return;
+    done = true;
+    snapshotChild = null;
+    let ok = false;
+    if (code === 0) {
+      try { ok = reloadSnapshot(); } catch (e) { console.log(`contributors: reload failed: ${e.message}`); }
+      if (ok) console.log(`contributors: snapshot ready · ${contributors.size} contributors · ${totalMergedPRs} merged PRs`);
+    } else console.log(`contributors: rebuild failed (exit ${code})`);
+    if (!ok) retrySnapshotLater();
+  };
+  child.on('error', (e) => { console.log(`contributors: ${e.message}`); finish(-1); });
+  child.on('exit', (code) => finish(code));
 }
 setInterval(() => {
   const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
-  const day = todayPT();
-  if (hour === 4 && snapshotDay !== day) { snapshotDay = day; refreshSnapshot(); }
+  const day = todayLocal();
+  if (hour === 4 && snapshotDay !== day) { snapshotDay = day; refreshSnapshot('daily'); }
 }, 5 * 60_000).unref();
-if (process.env.REFRESH_ON_START === '1') setTimeout(refreshSnapshot, 5000).unref();
+if (!bootSnap.ok) {
+  console.log(`contributors: no usable snapshot in ${SNAPSHOT_FILE} (${bootSnap.why})`);
+  snapshotState = 'building';
+  setImmediate(() => refreshSnapshot('first run for this repo'));
+} else if (process.env.REFRESH_ON_START === '1') setTimeout(() => refreshSnapshot('REFRESH_ON_START'), 5000).unref();
 
 // Proof of GitHub ownership: a public gist containing the one-time code.
 async function gistHasCode(login, code, since, alsoApi = true) {
@@ -301,7 +452,7 @@ function newCode() {
   const b = crypto.randomBytes(6);
   let s = '';
   for (const x of b) s += CODE_ALPHABET[x % CODE_ALPHABET.length];
-  return `cmem-lounge-${s}`;
+  return `${CFG.codePrefix}-${s}`;
 }
 
 function createSession(login) {
@@ -549,15 +700,15 @@ function useFurniture(u, fid) {
     rollDay().gongs++; daily.save();
     broadcast({ t: 'fx', kind: 'gong', fid, by: u.id });
     system(`🔔 @${u.login} rang the merge gong`);
-    if (!u.npc && Math.random() < 0.5) observerSay(pick(OBS.gong), 1400);
+    if (!u.npc && Math.random() < 0.5) botSay(pick(BOT.gong), 1400);
     pushStats();
   } else if (f.use === 'deploy') {
     if (t < cooldown.deploy) return sendTo(u, { t: 'notice', text: 'prod is still recovering. give it a sec.' });
     cooldown.deploy = t + 20000;
     rollDay().deploys++; daily.save();
     broadcast({ t: 'fx', kind: 'deploy', fid, by: u.id });
-    system(`🚨 @${u.login} deployed to prod on a ${weekdayPT()}`);
-    if (!u.npc && Math.random() < 0.6) observerSay(pick(OBS.deploy), 1800);
+    system(`🚨 @${u.login} deployed to prod on a ${weekdayLocal()}`);
+    if (!u.npc && Math.random() < 0.6) botSay(pick(BOT.deploy), 1800);
     pushStats();
   } else if (f.use === 'kombucha' || f.use === 'coldbrew') {
     u.item = f.use;
@@ -591,66 +742,45 @@ setInterval(() => {
   }
 }, 100).unref();
 
-// ---------------------------------------------------------------- the observer (our resident bot)
+// ---------------------------------------------------------------- the resident bot (name and lines from the config)
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
-const OBS = {
-  mention: [
-    'observing. always observing. 📝',
-    'noted. filed under "things said in the lounge".',
-    "i don't sleep. i compress.",
-    'that one is going straight into the timeline.',
-    'saved 1 observation. 87% fewer tokens than remembering it the hard way.',
-    "i've read every merged PR in this repo. yes, even that one.",
-    'context is all you need.',
-    'try /stats if you want the receipts.',
-    'my context window is your context window.',
-    'beep. the session amnesia ends here.',
-  ],
-  gong: ['🔔 shipped. noted.', 'merge energy detected.', 'another one for the timeline.', 'that gong goes in the changelog.'],
-  deploy: ['rolling back… jk.', 'on-call has been paged. (it is you.)', '🔥 this is fine 🔥', 'ship it. ship it all.'],
-  tips: [
-    'tip: tap the fridge for a kombucha, or the bar for a cold brew.',
-    'tip: tap anyone to see their merged PRs.',
-    'tip: the gong is for merges. ring responsibly.',
-    'tip: /dance exists.',
-    'tip: the wall of fame (left wall) lists every merged contributor.',
-    'tip: whisper with /w @someone your message.',
-  ],
-};
-const observer = {
-  id: 'observer', login: 'observer', npc: true, admin: false, merged: 0,
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const BOT_MENTION = new RegExp(`\\b${escRe(BOT.name)}\\b|@${escRe(BOT.name)}|\\bbot\\b.*\\?$`, 'i');
+const bot = {
+  // "bot:" can't appear in a GitHub login, so a person who shares the bot's name stays a person
+  id: `bot:${BOT.name.toLowerCase()}`, login: BOT.name, npc: true, admin: false, merged: 0,
   look: { bot: true }, x: 8, y: 9, dir: 5, pose: 'stand', path: null, pathStart: 0,
   seat: null, item: null, itemUntil: 0, lastActive: now(), afk: false,
 };
-users.set(observer.id, observer);
-let observerLastSaid = 0;
-let observerQueue = Promise.resolve();
-let observerPending = 0;
-function observerSay(text, delay = 900) {
-  if (observerPending >= 4) return; // the bot never gets more than a few lines behind
-  observerPending++;
-  observerQueue = observerQueue.then(() => new Promise((r) => setTimeout(() => {
-    observerPending--;
-    try { say(observer, text); observerLastSaid = now(); } catch { /* keep the queue moving */ }
+users.set(bot.id, bot);
+let botLastSaid = 0;
+let botQueue = Promise.resolve();
+let botPending = 0;
+function botSay(text, delay = 900) {
+  if (botPending >= 4) return; // the bot never gets more than a few lines behind
+  botPending++;
+  botQueue = botQueue.then(() => new Promise((r) => setTimeout(() => {
+    botPending--;
+    try { say(bot, text); botLastSaid = now(); } catch { /* keep the queue moving */ }
     r();
   }, delay)));
 }
 function humansOnline() { return [...users.values()].filter((u) => !u.npc && !u.ghost).length; }
-(function observerWander() {
+(function botWander() {
   setTimeout(() => {
-    if (!observer.path && humansOnline() > 0) {
-      const [ox, oy] = planFrom(observer);
+    if (!bot.path && humansOnline() > 0) {
+      const [ox, oy] = planFrom(bot);
       for (let i = 0; i < 12; i++) {
         const [x, y] = randomWalkable();
         if (Math.abs(x - ox) + Math.abs(y - oy) > 7) continue;
         const p = findPath(ox, oy, x, y, { allowGoalSeat: false });
-        if (p && p.length) { startPath(observer, p); break; }
+        if (p && p.length) { startPath(bot, p); break; }
       }
     }
-    if (humansOnline() > 0 && now() - observerLastSaid > 25 * 60_000 && Math.random() < 0.15) {
-      observerSay(pick(OBS.tips), 0);
+    if (humansOnline() > 0 && now() - botLastSaid > 25 * 60_000 && Math.random() < 0.15) {
+      botSay(pick(BOT.idle), 0);
     }
-    observerWander();
+    botWander();
   }, 9000 + Math.random() * 16000).unref?.();
 })();
 
@@ -700,7 +830,7 @@ function handleCommand(u, text) {
       if (!chatAllowed(u, '/stats')) return; // it makes the bot talk, so it counts as talking
       const s = stats();
       const top = Object.values(profiles.data).filter((p) => !p.test).sort((a, b) => b.msgs - a.msgs).slice(0, 3).map((p) => `@${p.login} (${p.msgs})`).join(', ');
-      observerSay(`📊 ${s.contributors} merged contributors · ${s.mergedPRs.toLocaleString('en-US')} merged PRs · today: ${plural(s.visitors, 'visitor')}, ${plural(s.messages, 'message')}, ${plural(s.gongs, 'gong')}, ${plural(s.deploys, 'deploy')}${top ? ' · chattiest: ' + top : ''}`, 500);
+      botSay(`📊 ${s.contributors} merged contributors · ${s.mergedPRs.toLocaleString('en-US')} merged PRs · today: ${plural(s.visitors, 'visitor')}, ${plural(s.messages, 'message')}, ${plural(s.gongs, 'gong')}, ${plural(s.deploys, 'deploy')}${top ? ' · chattiest: ' + top : ''}`, 500);
       return;
     }
     case 'gong': {
@@ -826,8 +956,8 @@ function onChat(u, raw) {
   if (p) { p.msgs = (p.msgs || 0) + 1; profiles.save(); }
   rollDay().messages++; daily.save();
   pushStats();
-  if (/\bobserver\b|@observer|\bbot\b.*\?$/i.test(text) && now() - observerLastSaid > 4000) {
-    observerSay(pick(OBS.mention), 1100);
+  if (BOT_MENTION.test(text) && now() - botLastSaid > 4000) {
+    botSay(pick(BOT.mention), 1100);
   }
 }
 
@@ -896,8 +1026,8 @@ function onHello(ws, msg, ip) {
       moveTo(u, tx, ty);
     }, 450);
   }
-  if (firstTime) observerSay(`welcome to the lounge, @${u.login} — ${u.merged} merged PR${u.merged === 1 ? '' : 's'}. you're in the timeline now.`, 1800);
-  else if (returning) observerSay(`welcome back, @${u.login}. last seen ${ago(t - prevSeen)}.`, 1800);
+  if (firstTime) botSay(fill(pick(BOT.greet), { login: u.login, merged: u.merged }), 1800);
+  else if (returning) botSay(fill(pick(BOT.welcomeBack), { login: u.login, ago: ago(t - prevSeen) }), 1800);
   return u;
 }
 
@@ -1035,8 +1165,9 @@ const server = http.createServer(async (req, res) => {
     const ip = clientIp(req);
     if (url.pathname === '/api/status' && req.method === 'GET') {
       const s = stats();
-      return json(res, 200, { online: s.online, contributors: s.contributors, mergedPRs: s.mergedPRs });
+      return json(res, 200, { online: s.online, contributors: s.contributors, mergedPRs: s.mergedPRs, snapshot: snapshotState });
     }
+    if (url.pathname === '/api/config' && req.method === 'GET') return json(res, 200, PUBLIC_CONFIG);
     if (url.pathname === '/api/fame' && req.method === 'GET') {
       if (!sessionFor(bearer(req))) return json(res, 401, { ok: false });
       const online = new Set([...users.values()].filter((u) => !u.npc && !u.ghost).map((u) => u.id));
@@ -1084,7 +1215,7 @@ const server = http.createServer(async (req, res) => {
       const key = login.toLowerCase();
       const nonce = typeof body.nonce === 'string' ? body.nonce : '';
       const ch = challenges.get(nonce);
-      const c = contributors.get(key);
+      const c = memberFor(key);
       if (!ch || ch.key !== key || !c || now() - ch.created > CHALLENGE_TTL) return json(res, 400, { ok: false, reason: 'no-challenge' });
       if (++ch.tries > 40) return json(res, 429, { ok: false, reason: 'too-many-tries' });
       const ok = await gistHasCode(c.login, ch.code, ch.created, ch.tries % 4 === 0);
@@ -1092,8 +1223,8 @@ const server = http.createServer(async (req, res) => {
       challenges.delete(nonce);
       // last check against GitHub itself: if this name no longer has merged PRs (say the account was
       // renamed and someone else took the old name), it doesn't get in. If GitHub is busy, let them in.
-      const live = await liveMerged(c.login);
-      if (live && live.count === 0) return json(res, 403, { ok: false, reason: 'not-contributor' });
+      const live = ALLOW.has(key) ? null : await liveMerged(c.login);
+      if (live && live.count < MIN_PRS) return json(res, 403, { ok: false, reason: 'not-contributor' });
       if (live && live.count !== c.merged) {
         c.merged = live.count;
         if (live.last) c.last = live.last;
@@ -1108,6 +1239,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
     if (url.pathname === '/shared/world.js') return serveFile(req, res, path.join(ROOT, 'shared', 'world.js'));
+    if (url.pathname === '/shared/config.js') return serveFile(req, res, path.join(ROOT, 'shared', 'config.js'));
     let rel;
     try { rel = decodeURIComponent(url.pathname); } catch { res.writeHead(400); return res.end(); }
     if (rel.includes('\0')) { res.writeHead(400); return res.end(); }
@@ -1167,6 +1299,7 @@ setInterval(() => {
 
 function shutdown() {
   for (const s of [profiles, sessions, chatStore, extraContrib, daily]) { try { s.flush(); } catch { /* ignore */ } }
+  try { snapshotChild?.kill(); } catch { /* ignore */ }
   process.exit(0);
 }
 process.on('SIGTERM', shutdown);
@@ -1179,5 +1312,5 @@ process.on('uncaughtException', (e) => {
 process.on('unhandledRejection', (e) => console.error('unhandled rejection', e && e.stack || e));
 
 server.listen(PORT, () => {
-  console.log(`merge lounge on :${PORT} · ${contributors.size} contributors · room ${W}x${H} · step ${STEP_MS}ms`);
+  console.log(`merge lounge on :${PORT} · ${REPO} · ${contributors.size} contributors (snapshot ${snapshotState}) · room ${W}x${H} · step ${STEP_MS}ms`);
 });

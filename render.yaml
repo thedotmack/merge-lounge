@@ -1,0 +1,24 @@
+# Render Blueprint: one web service from the Dockerfile with a disk for the lounge's state.
+# The repo, admins and everything else live in lounge.config.json. Disks need a paid plan.
+services:
+  - type: web
+    runtime: docker
+    name: merge-lounge
+    plan: 0.5c-512mb          # disks need a paid plan
+    healthCheckPath: /api/status
+    autoDeployTrigger: 'off'  # advised for Deploy-to-Render templates
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: STATE_DIR
+        value: /data
+      # Render's guide: Cloudflare writes CF-Connecting-IP on every request and overwrites the caller's
+      # value (https://render.com/articles/host-pocketbase-on-render). Remove to share one limit instead.
+      - key: CLIENT_IP_HEADER
+        value: cf-connecting-ip
+      - key: GITHUB_TOKEN
+        sync: false
+    disk:
+      name: lounge-state
+      mountPath: /data
+      sizeGB: 1
