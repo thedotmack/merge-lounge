@@ -13,41 +13,51 @@
   "skyline": {
     "city": "San Francisco",
     "names": [
-      "TOKENLY", "CTXBASE", "VECTORLY", "PROMPTCO", "AGI SOON", "GPU BARN", "MEMLABS", "LGTM CAP",
-      "SHIPIT", "10X LABS", "RAGTAG", "EVALS4U", "DIFFCO", "HOTFIX", "SERIES Z", "INFER.IO",
-      "STEALTH", "YOLO OPS", "MERGEINC", "NEURALLY", "COMPUTE+", "PIVOTLY", "ATTENTIO", "WEIGHTS"
+      "STEALTH", "WAITLIST", "DEMOWARE", "AGI SOON", "GPU BARN", "WRAPPER", "AGENTIC", "RAGTAG",
+      "AMNESIAC", "BURN RATE", "EVALS4U", "BENCHMAXX", "HALLUCINC", "VIBE OPS", "10X-ISH", "YOLO OPS",
+      "LGTM CAP", "SERIES Z", "COMPUTE+", "PIVOT 9", "AI AI AI", "OPEN-ISH", "PRE-REV", "ACQUIHIRE"
     ],
     "billboards": [
-      ["CONTEXT IS", "ALL YOU NEED"], ["YOUR AGENT", "FORGOT AGAIN?"], ["MEMORY >", "VIBES"],
-      ["HIRING: 10X", "PROMPTER"], ["SHIP ON", "FRIDAYS"], ["TOKENS: CHEAP", "MEMORY: RARE"],
-      ["CLAUDE-MEM", "REMEMBERS"], ["AGI BY Q3", "(MAYBE)"], ["SESSION", "AMNESIA? NAH"],
-      ["MERGED >", "PERFECT"], ["LGTM", "SHIP IT"], ["ZERO-SHOT", "ZERO SLEEP"]
+      ["CONTEXT IS", "ALL YOU NEED"], ["YOUR AGENT", "FORGOT AGAIN?"], ["HIRING: 10X", "PROMPTER"],
+      ["AGI BY Q3", "(MAYBE)"], ["ZERO-SHOT", "ZERO SLEEP"], ["100% ACCURATE", "SOURCE: ME"],
+      ["TOKENS: CHEAP", "MEMORY: RARE"], ["NOW HIRING:", "ONE HUMAN"], ["MERGED >", "PERFECT"],
+      ["CLAUDE-MEM", "REMEMBERS"], ["NEW: AGENTS", "FOR AGENTS"], ["$1B VALUATION", "$0 REVENUE"]
     ]
   },
   "ticker": [
     "{contributors} MERGED CONTRIBUTORS",
     "{mergedPRs} PRS MERGED",
+    "AGI SOON PUSHES AGI TO NEXT QUARTER",
     "{online} IN THE LOUNGE",
+    "AMNESIAC AGENT FORGETS EVERYTHING, INTRODUCES ITSELF AGAIN",
     "{gongs:GONG} TODAY",
-    "CONTEXT IS ALL YOU NEED",
+    "BENCHMAXX TOPS LEADERBOARD IT WROTE",
     "{deploys:DEPLOY} TO PROD TODAY",
+    "HALLUCINC BEATS EARNINGS. EARNINGS DO NOT EXIST",
     "WELCOME TO THE MERGE LOUNGE"
   ],
   "bot": {
     "name": "observer",
-    "greet": ["welcome to the lounge, @{login} — {merged:merged PR}. you're in the timeline now."],
-    "welcomeBack": ["welcome back, @{login}. last seen {ago}."],
+    "greet": [
+      "welcome in, @{login} — {merged:merged PR}. you're in the timeline.",
+      "new session: @{login}, {merged:merged PR} loaded into context.",
+      "observation: @{login} walked in with {merged:merged PR}. filed."
+    ],
+    "welcomeBack": [
+      "welcome back, @{login}. last seen {ago}.",
+      "@{login} is back. last seen {ago}. context restored."
+    ],
     "mention": [
       "observing. always observing. 📝",
       "noted. filed under \"things said in the lounge\".",
       "i don't sleep. i compress.",
       "that one is going straight into the timeline.",
-      "saved 1 observation. 87% fewer tokens than remembering it the hard way.",
       "i've read every merged PR in this repo. yes, even that one.",
-      "context is all you need.",
       "try /stats if you want the receipts.",
       "my context window is your context window.",
-      "beep. the session amnesia ends here."
+      "beep. the session amnesia ends here.",
+      "compacted twice today. still know who you are.",
+      "my opinions are a config file."
     ],
     "idle": [
       "tip: tap the fridge for a kombucha, or the bar for a cold brew.",
@@ -55,10 +65,11 @@
       "tip: the gong is for merges. ring responsibly.",
       "tip: /dance exists.",
       "tip: the wall of fame (left wall) lists every merged contributor.",
-      "tip: whisper with /w @someone your message."
+      "tip: whisper with /w @someone your message.",
+      "tip: my notes live in the server racks. don't unplug them."
     ],
-    "gong": ["🔔 shipped. noted.", "merge energy detected.", "another one for the timeline.", "that gong goes in the changelog."],
-    "deploy": ["rolling back… jk.", "on-call has been paged. (it is you.)", "🔥 this is fine 🔥", "ship it. ship it all."]
+    "gong": ["🔔 shipped. noted.", "merge energy detected.", "another one for the timeline.", "that gong goes in the changelog.", "LGTM, retroactively."],
+    "deploy": ["rolling back… jk.", "on-call has been paged. (it is you.)", "no tests were harmed in this deploy. none were run.", "deployed. i've started a note for the postmortem.", "ship it. ship it all."]
   },
   "codePrefix": "cmem-lounge",
   "theme": { "accent": "#f26b3a" },
