@@ -55,7 +55,7 @@ let st, srv;
 const clients = [];
 
 try {
-  st = makeState({ config: testConfig, snapshot, testLogins: [...names, 'test-admin', 'test-dee'], files: { 'contributors-extra.json': extra } });
+  st = makeState({ config: testConfig, snapshot, testLogins: [...names, 'test-admin', 'test-dee', 'test-kick'], files: { 'contributors-extra.json': extra } });
   const tokens = st.tokens;
   // CLIENT_IP_HEADER names the one header to trust; requests without it count by socket address
   srv = await startServer({ stateDir: st.stateDir, configPath: st.configPath, env: { ADMINS: 'test-admin', CLIENT_IP_HEADER: 'x-test-ip' } });
@@ -200,6 +200,36 @@ try {
   B.send({ t: 'emote', e: 'dance' });
   ok('dance pose', !!(await A.wait((m) => m.t === 'state' && m.id === names[1] && m.pose === 'dance', 4000)));
 
+  // a wave aimed at one person (profile card): only they get a notice, at most once per 10 s per pair
+  const wvA = A.msgs.length, wvB = B.msgs.length, wvC = C.msgs.length;
+  B.send({ t: 'emote', e: 'wave', to: '@' + names[0].toUpperCase() });
+  const wv = await A.wait((m) => m.t === 'notice' && m.kind === 'wave', 3000, wvA);
+  ok('targeted wave: the person waved at gets a notice', !!wv && wv.from === names[1] && /waved at you/.test(wv.text), JSON.stringify(wv));
+  ok('targeted wave: everyone still sees the wave', !!(await C.wait((m) => m.t === 'gesture' && m.id === names[1] && m.g === 'wave', 3000, wvC)));
+  B.send({ t: 'emote', e: 'wave', to: names[0] }); // same pair again, inside the cooldown
+  B.send({ t: 'emote', e: 'wave', to: names[1] }); // at yourself
+  B.send({ t: 'emote', e: 'wave', to: 'bot:' + BOT }); // at the bot
+  B.send({ t: 'emote', e: 'wave', to: { toString: 1 } });
+  await sleep(600);
+  const waves = (c, from) => c.msgs.slice(from).filter((m) => m.t === 'notice' && m.kind === 'wave').length;
+  ok('targeted wave: nobody else is told, no repeat inside 10 s, no self or bot waves', waves(A, wvA) === 1 && waves(B, wvB) === 0 && waves(C, wvC) === 0,
+    `A=${waves(A, wvA)} B=${waves(B, wvB)} C=${waves(C, wvC)}`);
+  const acks = (c, from) => c.msgs.slice(from).filter((m) => m.t === 'notice' && m.kind === 'waved');
+  ok('targeted wave without ack (older tabs): the waver gets no "You waved" notice', acks(B, wvB).length === 0, JSON.stringify(acks(B, wvB)));
+  // ack: true (newer tabs): the waver hears back only when the ping went out
+  // (C waves at B here: the C>A pair must stay fresh for the muted-wave checks further down)
+  const akC = C.msgs.length, akB = B.msgs.length;
+  C.send({ t: 'emote', e: 'wave', to: names[1], ack: true });
+  const ack = await C.wait((m) => m.t === 'notice' && m.kind === 'waved', 3000, akC);
+  C.send({ t: 'emote', e: 'wave', to: names[1], ack: true }); // inside the cooldown: no ping, so no ack
+  C.send({ t: 'emote', e: 'wave', to: names[2], ack: true }); // at yourself
+  C.send({ t: 'emote', e: 'wave', to: names[1], ack: 'yes' }); // not a boolean
+  await sleep(500);
+  ok('targeted wave with ack: one "You waved" notice, only for a ping that went out',
+    !!ack && ack.to === names[1] && /You waved at @/.test(ack.text) && acks(C, akC).length === 1 && waves(B, akB) === 1,
+    `${JSON.stringify(ack)} acks=${acks(C, akC).length} pings=${waves(B, akB)}`);
+  ok('welcome says how much history it sent', wA.historyLimit === 80 && wA.history.length <= 80, String(wA.historyLimit));
+
   C.send({ t: 'chat', text: '/gong' });
   const fx = await A.wait((m) => m.t === 'fx' && m.kind === 'gong', 15000);
   ok('/gong walks over and rings for everyone', !!fx);
@@ -230,6 +260,32 @@ try {
   await sleep(300);
   C.send({ t: 'chat', text: 'still allowed to talk' });
   ok('others can still talk', !!(await D.wait((m) => m.t === 'chat' && /still allowed/.test(m.text || ''))));
+
+  // a muted person's wave still shows in the room, but pings nobody (and they're told why)
+  D.send({ t: 'chat', text: `/mute ${names[2]} 5` });
+  await D.wait((m) => m.t === 'chat' && /was muted/.test(m.text || ''), 3000);
+  const mA = A.msgs.length, mC = C.msgs.length;
+  C.send({ t: 'emote', e: 'wave', to: names[0], ack: true });
+  const mutedNote = await C.wait((m) => m.t === 'notice' && /muted/.test(m.text) && /didn't get a ping/.test(m.text), 3000, mC);
+  ok('muted wave: everyone still sees the wave', !!(await A.wait((m) => m.t === 'gesture' && m.id === names[2] && m.g === 'wave', 3000, mA)));
+  await sleep(500);
+  ok('muted wave: the person waved at gets no notice, the muted one is told why (and gets no "You waved")',
+    !A.msgs.slice(mA).some((m) => m.t === 'notice' && m.kind === 'wave') && !!mutedNote && mutedNote.kind === 'waveBlocked'
+      && !C.msgs.slice(mC).some((m) => m.t === 'notice' && m.kind === 'waved'), JSON.stringify(mutedNote));
+  D.send({ t: 'chat', text: `/unmute ${names[2]}` });
+  await D.wait((m) => m.t === 'notice' && /unmuted/.test(m.text), 3000);
+  C.send({ t: 'emote', e: 'wave', to: names[0] });
+  ok('after /unmute the same wave pings again', !!(await A.wait((m) => m.t === 'notice' && m.kind === 'wave' && m.from === names[2], 3000, mA)));
+
+  // a kick says when they can come back, also as a relative retryIn (ms) so a skewed clock can't get it wrong
+  const K = client('test-kick');
+  await K.open();
+  D.send({ t: 'chat', text: '/kick test-kick' });
+  const kk = await K.wait((m) => m.t === 'kicked', 3000);
+  ok('kick: sends until and retryIn', !!kk && Number.isFinite(kk.until) && kk.retryIn > 110_000 && kk.retryIn <= 120_000, JSON.stringify(kk));
+  const kk2 = await client('test-kick').open();
+  ok('kick: coming back early is refused with retryIn too',
+    kk2.t === 'kicked' && kk2.retryIn > 0 && kk2.retryIn <= 120_000 && Math.abs((kk2.until - Date.now()) - kk2.retryIn) < 2000, JSON.stringify(kk2));
 
   // ---------------------------------------------------------------- limits, tabs, fame, leaving
   for (let i = 0; i < 9; i++) A.send({ t: 'chat', text: 'spam ' + i });
@@ -329,8 +385,8 @@ await scenario('state marked for another repo', {
 await scenario('bot name collision', {
   config: { repo: 'example-org/bot-test', bot: { name: 'test-bot' } },
   snapshot: { repo: 'example-org/bot-test', generated: '', total_merged_prs: 6, contributors: [{ login: 'test-bot', merged: 3, first: '', last: '' }, { login: 'test-ada', merged: 3, first: '', last: '' }] },
-  testLogins: ['test-bot', 'test-ada'],
-}, {}, async (s2, st2) => {
+  testLogins: ['test-bot', 'test-ada', 'test-cy'],
+}, { ADMINS: 'test-ada' }, async (s2, st2) => {
   const A = new Client(s2.ws, st2.tokens['test-ada']);
   const wA = await A.open();
   const botU = wA.users?.find((u) => u.npc);
@@ -340,6 +396,20 @@ await scenario('bot name collision', {
   ok('a person named like the bot is a person', wH.t === 'welcome' && wH.you?.id === 'test-bot' && wH.users.filter((u) => u.login === 'test-bot').length === 2, JSON.stringify(wH.you));
   H.send({ t: 'chat', text: 'hello i am a human' });
   ok('their chat reaches others', !!(await A.wait((m) => m.t === 'chat' && m.uid === 'test-bot' && !m.npc && /i am a human/.test(m.text || ''))));
+  // /purge of the person who shares the bot's name removes their lines and never the bot's
+  const botLine = await A.wait((m) => m.t === 'chat' && m.npc && m.uid === 'bot:test-bot', 6000);
+  const pm = A.msgs.length;
+  A.send({ t: 'chat', text: '/purge test-bot' });
+  const pg = await A.wait((m) => m.t === 'purge', 3000, pm);
+  ok('/purge broadcasts the person\'s uid (and still the login, for old tabs)', pg?.uid === 'test-bot' && pg?.login === 'test-bot', JSON.stringify(pg));
+  const pn = await A.wait((m) => m.t === 'notice' && /^removed/.test(m.text || ''), 3000, pm);
+  ok('/purge counts only the person\'s lines', pn?.text === 'removed 1 message', pn?.text);
+  const Cy = new Client(s2.ws, st2.tokens['test-cy']);
+  const wCy = await Cy.open();
+  Cy.close();
+  const hist = wCy.history || [];
+  ok('/purge keeps the bot\'s lines in history', !!botLine && hist.some((h) => h.npc && h.uid === 'bot:test-bot') && !hist.some((h) => h.uid === 'test-bot' && !h.npc),
+    JSON.stringify(hist.map((h) => `${h.uid}${h.npc ? '(bot)' : ''}: ${String(h.text).slice(0, 24)}`)));
   H.close();
   ok('they leave as themselves', !!(await A.wait((m) => m.t === 'leave' && m.id === 'test-bot', 9000)));
   ok('the bot stays', !A.has((m) => m.t === 'leave' && m.id === 'bot:test-bot') && !/error/i.test(s2.log.join('')), s2.log.join('').split('\n').filter((l) => /error/i.test(l)).slice(0, 2).join(' | '));

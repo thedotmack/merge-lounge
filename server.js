@@ -157,6 +157,7 @@ if (bootSnap.ok) {
 }
 
 const HISTORY_MAX = 150;
+const HISTORY_SEND = 80; // the most a visitor gets on arrival (fewer when the room is new); sent as welcome.historyLimit for the chat header
 
 function todayLocal() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -864,8 +865,9 @@ function handleCommand(u, text) {
     }
     case 'kick': {
       if (!target || target.npc) return note('not here');
-      if (prof) { prof.kickedUntil = now() + 2 * 60_000; profiles.flush(); }
-      send(sockets.get(target.id), { t: 'kicked', reason: 'kicked by an admin' });
+      const until = now() + 2 * 60_000;
+      if (prof) { prof.kickedUntil = until; profiles.flush(); }
+      send(sockets.get(target.id), { t: 'kicked', reason: 'kicked by an admin', until, retryIn: until - now() }); // retryIn: ms, immune to clock skew
       sockets.get(target.id)?.close(4001, 'kicked');
       return;
     }
@@ -882,10 +884,13 @@ function handleCommand(u, text) {
     }
     case 'purge': {
       if (!validKey) return note('purge whom? /purge username');
+      // a person's lines go by uid (a human's uid is their lower-cased login) and never the bot's, even
+      // when someone shares the bot's name; their announcements carry only a login
+      const gone = (e) => (e.uid === tKey && !e.npc) || (e.kind === 'announce' && !e.uid && (e.login || '').toLowerCase() === tKey);
       const before = chatStore.data.items.length;
-      chatStore.data.items = chatStore.data.items.filter((e) => (e.login || '').toLowerCase() !== tKey);
+      chatStore.data.items = chatStore.data.items.filter((e) => !gone(e));
       chatStore.save();
-      broadcast({ t: 'purge', login: tKey });
+      broadcast({ t: 'purge', login: tKey, uid: tKey });
       return note(`removed ${plural(before - chatStore.data.items.length, 'message')}`);
     }
     case 'clear': {
@@ -923,6 +928,27 @@ function chatAllowed(u, text) {
 
 function gesture(u, g) {
   broadcast({ t: 'gesture', id: u.id, g });
+}
+// A wave from someone's profile card: the person waved at gets a notice. One per pair every 10 s, so a
+// wave can't be used to flood someone's screen, and none at all from someone who is muted.
+// ack (optional, newer clients): the waver is told when the ping really went out, so their feed never
+// says "You waved at @x" for a ping that was blocked. Older tabs don't ask and write that line themselves.
+const waveCooldown = new Map();
+function waveAt(u, to, ack) {
+  const target = to.length <= 80 ? findUserByLogin(to) : null;
+  if (!target || target.npc || target.ghost || target.id === u.id) return;
+  const t = now();
+  const muted = profiles.data[u.id]?.mutedUntil;
+  if (muted && muted > t) {
+    sendTo(u, { t: 'notice', kind: 'waveBlocked', to: target.login, text: `you're muted for ${ago(muted - t).replace(' ago', '')}, so @${target.login} didn't get a ping` });
+    return;
+  }
+  const key = `${u.id}>${target.id}`;
+  if ((waveCooldown.get(key) || 0) > t) return;
+  if (waveCooldown.size > 2000) for (const [k, until] of waveCooldown) if (until <= t) waveCooldown.delete(k);
+  waveCooldown.set(key, t + 10_000);
+  sendTo(target, { t: 'notice', kind: 'wave', from: u.login, text: `@${u.login} waved at you 👋` });
+  if (ack) sendTo(u, { t: 'notice', kind: 'waved', to: target.login, text: `You waved at @${target.login} 👋` });
 }
 function setPose(u, pose) {
   if (!['stand', 'sit', 'dance'].includes(pose)) return;
@@ -968,7 +994,7 @@ function onHello(ws, msg, ip) {
   const id = s.login;
   const p = profiles.data[id] || ensureProfile(id, contributors.get(id)?.login || id);
   if (p.banned) { send(ws, { t: 'kicked', reason: 'banned' }); ws.close(4003, 'banned'); return null; }
-  if (p.kickedUntil && p.kickedUntil > now()) { send(ws, { t: 'kicked', reason: 'kicked — try again in a couple of minutes' }); ws.close(4001, 'kicked'); return null; }
+  if (p.kickedUntil && p.kickedUntil > now()) { send(ws, { t: 'kicked', reason: 'kicked — try again in a couple of minutes', until: p.kickedUntil, retryIn: p.kickedUntil - now() }); ws.close(4001, 'kicked'); return null; }
   if (s.test && !p.test) { p.test = true; profiles.save(); }
   s.lastUsed = now(); sessions.save();
 
@@ -1007,7 +1033,8 @@ function onHello(ws, msg, ip) {
     t: 'welcome',
     you: { id, login: u.login, admin: u.admin, merged: u.merged, customized: !!p.customized, firstTime },
     users: [...users.values()].filter((x) => !x.ghost).map(publicUser),
-    history: chatStore.data.items.slice(-80),
+    history: chatStore.data.items.slice(-HISTORY_SEND),
+    historyLimit: HISTORY_SEND,
     stats: stats(),
     serverTime: t,
   });
@@ -1066,7 +1093,11 @@ function onMessage(ws, state, data, ip) {
     case 'emote': {
       if (!u.actBucket.take()) return;
       u.lastActive = now();
-      if (msg.e === 'wave') return gesture(u, 'wave');
+      if (msg.e === 'wave') {
+        gesture(u, 'wave');
+        if (typeof msg.to === 'string') waveAt(u, msg.to, msg.ack === true); // optional: a wave aimed at one person
+        return;
+      }
       if (msg.e === 'dance') return setPose(u, u.pose === 'dance' ? 'stand' : 'dance');
       if (msg.e === 'sit') return setPose(u, u.pose === 'sit' ? 'stand' : 'sit');
       if (msg.e === 'stand') return setPose(u, 'stand');
