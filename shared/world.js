@@ -47,8 +47,8 @@ export const FURNITURE = [
   { id: 'arcade2', kind: 'arcade', x: 15, y: 0, hue: 'cyan' },
 
   // left wall (x = 0)
-  { id: 'rack1', kind: 'rack', x: 0, y: 1, label: 'OBSERVER-01' },
-  { id: 'rack2', kind: 'rack', x: 0, y: 2, label: 'OBSERVER-02' },
+  { id: 'rack1', kind: 'rack', x: 0, y: 1, label: 'RACK-01' },
+  { id: 'rack2', kind: 'rack', x: 0, y: 2, label: 'RACK-02' },
   { id: 'gong', kind: 'gong', x: 0, y: 4, use: 'gong', label: 'the merge gong' },
   { id: 'lamp', kind: 'lavalamp', x: 0, y: 6 },
   { id: 'plant3', kind: 'plant', x: 0, y: 11 },
@@ -98,16 +98,25 @@ export const WINDOW = { a: 0.35, b: 15.65, lo: 10, hi: 80 }; // the glass on the
 export const REACTIONS = ['🔥', '🚀', '🧠', '❤️', '😂', '👀', '🎉', '💯'];
 export const ITEMS = ['kombucha', 'coldbrew'];
 
-// Avatar wardrobe — indexes into these lists are what gets stored.
+// Avatar wardrobe — indexes into these lists are what gets stored, so lists only ever grow
+// at the end. Never reorder or remove an entry: saved looks would change.
 export const LOOK = {
-  skin: ['#f7d5b5', '#e9b48a', '#c98b5e', '#9c6440', '#6e4428', '#ffe0c4'],
-  hairStyle: ['short', 'long', 'bun', 'spiky', 'curly', 'buzz', 'mohawk', 'bald'],
-  hairColor: ['#1b1416', '#4a2c1d', '#8a5a33', '#d9a95b', '#b4372d', '#e8e3d9', '#5b6bff', '#ff6fb5', '#33c9a7'],
-  top: ['hoodie', 'tee', 'vest', 'turtleneck', 'flannel', 'jacket'],
-  topColor: ['#f26b3a', '#2b2d42', '#3a86ff', '#2ec4b6', '#8338ec', '#e63946', '#f4f1de', '#6a994e', '#ffbe0b', '#141414'],
-  pants: ['#23263a', '#3b4a6b', '#6b4e3d', '#2f2f2f', '#c2b280', '#4f6d7a'],
-  shoes: ['#f5f5f5', '#141414', '#e63946', '#3a86ff', '#ffbe0b'],
-  acc: ['none', 'glasses', 'shades', 'headphones', 'beanie', 'cap', 'visor', 'halo'],
+  skin: ['#f7d5b5', '#e9b48a', '#c98b5e', '#9c6440', '#6e4428', '#ffe0c4',
+    '#d9a07a', '#b57a52', '#57351f', '#3e2516'],
+  hairStyle: ['short', 'long', 'bun', 'spiky', 'curly', 'buzz', 'mohawk', 'bald',
+    'ponytail', 'bob', 'afro', 'braids', 'swept', 'pigtails'],
+  hairColor: ['#1b1416', '#4a2c1d', '#8a5a33', '#d9a95b', '#b4372d', '#e8e3d9', '#5b6bff', '#ff6fb5', '#33c9a7',
+    '#7a3a24', '#f3f2c6', '#8d8f98', '#e07b39', '#9b6cff', '#7fd16b'],
+  top: ['hoodie', 'tee', 'vest', 'turtleneck', 'flannel', 'jacket',
+    'sweater', 'polo', 'tank', 'overalls', 'puffer', 'cardigan'],
+  topColor: ['#f26b3a', '#2b2d42', '#3a86ff', '#2ec4b6', '#8338ec', '#e63946', '#f4f1de', '#6a994e', '#ffbe0b', '#141414',
+    '#ff7eb6', '#8ecae6', '#7f5539', '#adb5bd', '#2d6a4f', '#b8a1ff'],
+  pants: ['#23263a', '#3b4a6b', '#6b4e3d', '#2f2f2f', '#c2b280', '#4f6d7a',
+    '#7a2434', '#6c8eb5', '#d8d2c4', '#4a5d32'],
+  shoes: ['#f5f5f5', '#141414', '#e63946', '#3a86ff', '#ffbe0b',
+    '#7a4a24', '#2ec4b6', '#ff7eb6', '#8338ec'],
+  acc: ['none', 'glasses', 'shades', 'headphones', 'beanie', 'cap', 'visor', 'halo',
+    'round glasses', 'bucket hat', 'headband', 'scarf', 'beard', 'bow'],
 };
 
 export function hash32(str) {
@@ -116,13 +125,16 @@ export function hash32(str) {
   return h >>> 0;
 }
 
+// Default looks pick from the first release's list lengths, so appending wardrobe options
+// never changes the look (or chat colour) of someone who never picked one.
+const DEFAULT_LEN = { skin: 6, hairStyle: 8, hairColor: 9, top: 6, topColor: 10, pants: 6, shoes: 5, acc: 6 };
 export function defaultLook(login) {
   let h = hash32(String(login).toLowerCase());
-  const pick = (arr) => { const v = h % arr.length; h = Math.imul(h ^ (h >>> 13), 0x5bd1e995) >>> 0; return v; };
+  const pick = (k) => { const v = h % DEFAULT_LEN[k]; h = Math.imul(h ^ (h >>> 13), 0x5bd1e995) >>> 0; return v; };
   return {
-    skin: pick(LOOK.skin), hairStyle: pick(LOOK.hairStyle), hairColor: pick(LOOK.hairColor),
-    top: pick(LOOK.top), topColor: pick(LOOK.topColor), pants: pick(LOOK.pants),
-    shoes: pick(LOOK.shoes), acc: pick(LOOK.acc.slice(0, 6)),
+    skin: pick('skin'), hairStyle: pick('hairStyle'), hairColor: pick('hairColor'),
+    top: pick('top'), topColor: pick('topColor'), pants: pick('pants'),
+    shoes: pick('shoes'), acc: pick('acc'),
   };
 }
 
