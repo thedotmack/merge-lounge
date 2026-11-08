@@ -292,6 +292,13 @@ export class Valley {
         q.lift += 9;
       }
     }
+    // all the poles first, then the boards: a raised sign's long poles go behind the board below it
+    g.fillStyle = '#1a1820';
+    for (let i = 0; i < ns; i++) {
+      const q = signs[i];
+      g.fillRect(q.sx + 2, q.y - 2 - q.lift, 1, 2 + q.lift);
+      g.fillRect(q.sx + q.w - 4, q.y - 2 - q.lift, 1, 2 + q.lift);
+    }
     for (let i = 0; i < ns; i++) this.sign(g, signs[i], t, night);
 
     // freeway
@@ -447,13 +454,11 @@ export class Valley {
     return y;
   }
 
-  // a building's rooftop sign, placed by render() (q: building, roof y, name, board x/width, lift)
+  // a building's rooftop sign board, placed by render() (q: building, roof y, name, board x/width, lift);
+  // render() draws the poles
   sign(g, q, t, night) {
     const b = q.b, s = q.s, name = q.name, tw = q.w - 4, sx = q.sx, y = q.y, lift = q.lift;
     const sy = y - 9 - lift;
-    g.fillStyle = '#1a1820';
-    g.fillRect(sx + 2, y - 2 - lift, 1, 2 + lift);
-    g.fillRect(sx + tw, y - 2 - lift, 1, 2 + lift);
     if (night > 0.5) {
       g.fillStyle = '#0d0b14';
       g.fillRect(sx, sy, tw + 4, 7);

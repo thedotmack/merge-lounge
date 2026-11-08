@@ -5,18 +5,18 @@
 //
 //   node test/smoke.mjs
 //   SMOKE_REPO / SMOKE_MEMBER / SMOKE_STRANGER override the GitHub-backed checks (default: the repo and
-//   first admin from lounge.config.json, and torvalds as someone who isn't a contributor).
+//   first admin from examples/claude-mem.json, and torvalds as someone who isn't a contributor).
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  OFFLINE, sleep, committedConfig, makeState, startServer, getJson, postJson, Client, recorder, cleanup,
+  OFFLINE, sleep, exampleConfig, makeState, startServer, getJson, postJson, Client, recorder, cleanup,
 } from './helpers.mjs';
 
 const R = recorder('smoke test');
 const { ok, skip } = R;
-const committed = committedConfig();
-const REPO = process.env.SMOKE_REPO || committed.repo || 'octocat/hello-world';
-const MEMBER = process.env.SMOKE_MEMBER || (committed.admins || [])[0] || '';
+const example = exampleConfig();
+const REPO = process.env.SMOKE_REPO || example.repo || 'octocat/hello-world';
+const MEMBER = process.env.SMOKE_MEMBER || (example.admins || [])[0] || '';
 const STRANGER = process.env.SMOKE_STRANGER || 'torvalds';
 const BOT = 'lobby-bot';
 const MENTIONS = ['beep from the test config.', 'boop from the test config.'];
@@ -60,6 +60,7 @@ try {
   // CLIENT_IP_HEADER names the one header to trust; requests without it count by socket address
   srv = await startServer({ stateDir: st.stateDir, configPath: st.configPath, env: { ADMINS: 'test-admin', CLIENT_IP_HEADER: 'x-test-ip' } });
   const BASE = srv.base;
+  ok('ADMINS set: no "no admins set" line at boot', !/no admins set/.test(srv.log.join('')));
   const client = (login) => { const c = new Client(srv.ws, tokens[login]); clients.push(c); return c; };
 
   // ---------------------------------------------------------------- HTTP
@@ -382,13 +383,16 @@ await scenario('state marked for another repo', {
 });
 
 // ---------------------------------------------------------------- a person who shares the bot's name; client IP off Fly
+// (admins come from the config file here, not ADMINS: /purge below needs it)
 await scenario('bot name collision', {
-  config: { repo: 'example-org/bot-test', bot: { name: 'test-bot' } },
+  config: { repo: 'example-org/bot-test', admins: ['Test-Ada'], bot: { name: 'test-bot' } },
   snapshot: { repo: 'example-org/bot-test', generated: '', total_merged_prs: 6, contributors: [{ login: 'test-bot', merged: 3, first: '', last: '' }, { login: 'test-ada', merged: 3, first: '', last: '' }] },
   testLogins: ['test-bot', 'test-ada', 'test-cy'],
-}, { ADMINS: 'test-ada' }, async (s2, st2) => {
+}, {}, async (s2, st2) => {
+  ok('admins from the config file: no "no admins set" line at boot', !/no admins set/.test(s2.log.join('')));
   const A = new Client(s2.ws, st2.tokens['test-ada']);
   const wA = await A.open();
+  ok('admins from the config file: that person is an admin', wA.you?.admin === true, JSON.stringify(wA.you));
   const botU = wA.users?.find((u) => u.npc);
   ok('the bot\'s id can never be a GitHub login', botU?.id === 'bot:test-bot' && botU.login === 'test-bot', JSON.stringify(botU));
   const H = new Client(s2.ws, st2.tokens['test-bot']);
@@ -420,10 +424,13 @@ await scenario('bot name collision', {
   ok('off Fly, a rotating Fly-Client-IP does not get its own limits', (tally(res)[429] || 0) >= 5, JSON.stringify(tally(res)));
 });
 
-await scenario('on Fly', { config: { repo: 'example-org/fly-test' } }, { FLY_APP_NAME: 'test-app' }, async (s2) => {
+await scenario('on Fly', { config: { repo: 'example-org/fly-test', admins: [] } }, { FLY_APP_NAME: 'test-app' }, async (s2, st2) => {
   const fixed = [];
   for (let i = 0; i < 36; i++) fixed.push((await postJson(s2.base, '/api/auth/start', { login: 'x!' }, { 'Fly-Client-IP': '203.0.113.7' })).status);
   ok('on Fly (FLY_APP_NAME set), Fly-Client-IP is the address that gets limited', (tally(fixed)[429] || 0) >= 4, JSON.stringify(tally(fixed)));
+  // no admins in the file or ADMINS: one boot line says how to become one
+  const noAdmin = s2.log.join('').split('\n').filter((l) => /no admins set/.test(l));
+  ok('no admins anywhere: one boot line names the config file and the commands', noAdmin.length === 1 && noAdmin[0].includes(st2.configPath) && /\/announce, \/mute, \/kick/.test(noAdmin[0]), noAdmin.join(' | ') || 'no line');
 });
 
 const fails = R.report();

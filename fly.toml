@@ -1,7 +1,7 @@
 # Fly.io: one always-on Machine with a volume for the lounge's state.
 # The repo, admins and everything else live in lounge.config.json.
 app = "CHANGE-ME-merge-lounge"
-primary_region = "ord"            # pick yours: fly platform regions
+primary_region = "iad"            # one of the two cheapest; pick yours (fly platform regions) and match --region
 
 kill_signal = "SIGTERM"           # server.js handles SIGTERM and SIGINT; default is SIGINT
 kill_timeout = 30                 # seconds; default 5, max 300 (best-effort)

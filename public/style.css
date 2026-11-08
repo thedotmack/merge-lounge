@@ -156,15 +156,25 @@ canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
   display: flex; flex-direction: column; gap: 10px;
   animation: rise .6s .35s both;
 }
+/* later check-in steps replace the card in place: quick and with no delay (showStep in app.js) */
+.card.swap { animation: swapIn .15s ease-out both; }
+@keyframes swapIn { from { opacity: 0; transform: translateY(4px); } }
 .note { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 12px 14px; animation-delay: .3s; box-shadow: var(--shadow), inset 4px 0 0 var(--accent); padding-left: 18px; }
 .note p { margin: 0; flex: 1 1 220px; }
 .card p { margin: 0; }
 .card label { font: 400 12px/1 var(--display); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-.card .row { background: var(--panel-2); border-radius: 6px; box-shadow: 0 0 0 2px var(--line); }
-.card .row:focus-within { box-shadow: 0 0 0 2px var(--accent); }
+/* the username field row (not a row of buttons, .row.gap) */
+.card .row:not(.gap) { background: var(--panel-2); border-radius: 6px; box-shadow: 0 0 0 2px var(--line); }
+.card .row:not(.gap):focus-within { box-shadow: 0 0 0 2px var(--accent); }
 .at { display: grid; place-items: center; padding: 0 2px 0 12px; color: var(--muted); font-size: 18px; }
 #gh { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--ink); font: 400 18px var(--mono); padding: 0 8px; min-height: 48px; outline: none; }
-.card .row .btn { border-radius: 0 6px 6px 0; box-shadow: none; }
+.card .row:not(.gap) .btn { border-radius: 0 6px 6px 0; box-shadow: none; }
+/* the smallest phones: the whole "your-handle" placeholder fits (16px, not less: iOS zooms into smaller fields) */
+@media (max-width: 359px) {
+  .at { padding-left: 10px; }
+  #gh { font-size: 16px; padding: 0 4px 0 6px; }
+  .card .row:not(.gap) .btn { padding: 0 14px; }
+}
 .fine { font-size: 13px; color: var(--muted); }
 .err { color: #ff8b9a; font-size: 14px; min-height: 0; }
 @media (prefers-color-scheme: light) { .err, .status.bad { color: #b3263a !important; } .status.good { color: #1d7a35 !important; } }
@@ -379,6 +389,12 @@ canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
   .room:not(.wide) .preview { position: sticky; top: 0; padding: 8px; gap: 10px; }
   .room:not(.wide) #wPreview { width: 64px; height: 104px; }
   .room:not(.wide) .sheet-foot { padding: 8px 16px 10px; }
+  /* the room fills the height, leaving dark corners beside its walls: the first-visit tips go in the top
+     left one (under the top bar, above the left wall), so they don't cover the floor, people or name tags */
+  .room:not(.wide) .coach { top: calc(var(--top-h) + 4px); bottom: auto; right: auto; width: calc(min(220px, 24vw) + 12px + var(--safe-l)); padding-right: 0; align-items: stretch; }
+  .room:not(.wide) .coach-chip { flex-wrap: wrap; column-gap: 0; padding-left: 10px; font-size: 13px; }
+  .room:not(.wide) .coach-chip .btn { margin: 0 auto 6px 0; padding: 0 12px; }
+  .room:not(.wide) #lookNudge p { flex-basis: 100%; padding-bottom: 0; } /* its button and × go on a line below */
 }
 
 #chatForm { display: flex; gap: 8px; align-items: center; width: 100%; }

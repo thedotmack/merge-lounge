@@ -8,15 +8,20 @@ import { resolveConfig, publicConfig, fill, DEFAULTS, accentInk, contrast, githu
 import { configTable } from '../scripts/config-table.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-// The root config is the fork-ready one (repo + admins); examples/claude-mem.json is a fully customised lounge.
+// The root config is the fork placeholder (this repo, no admins); examples/claude-mem.json is a fully
+// customised lounge, and the one the claude-mem lounge runs with (CONFIG_PATH).
 const root = JSON.parse(fs.readFileSync(path.join(ROOT, 'lounge.config.json'), 'utf8'));
 const committed = JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', 'claude-mem.json'), 'utf8'));
 
-test('the root lounge.config.json is just repo and admins, and resolves cleanly', () => {
+test('the root lounge.config.json is a placeholder for this repo with no admins, and resolves cleanly', () => {
   assert.deepEqual(Object.keys(root).sort(), ['admins', 'repo']);
+  // a fork that changes only repo must not hand anyone admin of its lounge
+  assert.deepEqual(root.admins, []);
+  assert.notEqual(root.repo.toLowerCase(), committed.repo.toLowerCase());
   const { config: c, warnings } = resolveConfig(root, {}, { requireRepo: true });
   assert.deepEqual(warnings, []);
   assert.equal(c.repo, root.repo);
+  assert.deepEqual(c.admins, []);
   // everything else is the generic default text, worked out from the repo name
   assert.deepEqual(c.skyline.billboards, DEFAULTS.skyline.billboards);
   assert.deepEqual(c.bot.mention, DEFAULTS.bot.mention);
@@ -28,9 +33,25 @@ test('forking: changing repo in the root config leaves nothing of the original p
   const { config: c, warnings } = resolveConfig({ ...root, repo: 'octo/hello-world', admins: ['octo'] }, {}, { requireRepo: true });
   assert.deepEqual(warnings, []);
   const text = JSON.stringify(c).toLowerCase();
-  for (const word of [root.repo, root.repo.split('/')[1], ...root.admins, committed.blimp, committed.codePrefix]) {
+  for (const word of [root.repo, root.repo.split('/')[1], committed.repo, ...committed.admins, committed.blimp, committed.codePrefix, committed.bot.name]) {
     assert.ok(!text.includes(String(word).toLowerCase()), `forked config still mentions ${word}`);
   }
+});
+
+test('forking: changing repo but forgetting admins gives nobody admin', () => {
+  const { config: c } = resolveConfig({ ...root, repo: 'octo/hello-world' }, {}, { requireRepo: true });
+  assert.deepEqual(c.admins, []);
+});
+
+test('the example config sets everything its lounge depends on by itself', () => {
+  // the claude-mem lounge runs with CONFIG_PATH=examples/claude-mem.json, so nothing may come from the root file
+  // or from defaults that could change: its repo, admins and bot name (chat history refers to bot:<name>)
+  assert.equal(committed.repo, 'thedotmack/claude-mem');
+  assert.ok(committed.admins.length >= 1);
+  assert.equal(committed.bot.name, 'observer');
+  const { config: c } = resolveConfig(committed, {}, { requireRepo: true });
+  assert.equal(c.bot.name, 'observer');
+  assert.deepEqual(c.admins, committed.admins.map((a) => a.toLowerCase()));
 });
 
 test('copying the example but changing only repo is flagged', () => {
@@ -48,13 +69,13 @@ test('a config with only a repo is a complete, generic lounge', () => {
   assert.deepEqual(c.neon, { top: 'SLUGIFY', bottom: 'LGTM' });
   assert.equal(c.blimp, 'SLUGIFY');
   assert.equal(c.codePrefix, 'slugify-lounge');
-  assert.equal(c.bot.name, 'observer');
+  assert.equal(c.bot.name, 'doorbot');
   assert.deepEqual(c.admins, []);
   assert.equal(c.minMergedPRs, 1);
   assert.equal(c.skyline.city, 'Los Angeles');
   // nothing from the committed example config leaks into the defaults
   const text = JSON.stringify(c).toLowerCase();
-  for (const word of [committed.project.name, committed.blimp, committed.codePrefix, ...committed.admins]) {
+  for (const word of [committed.project.name, committed.blimp, committed.codePrefix, ...committed.admins, committed.bot.name]) {
     assert.ok(!text.includes(String(word).toLowerCase()), `default config mentions ${word}`);
   }
 });

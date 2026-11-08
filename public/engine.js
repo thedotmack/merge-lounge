@@ -369,7 +369,7 @@ const PAINT = {
 function buildFurnSprite(f, layer, extra) {
   const p = PAINT[f.kind];
   if (!p || !p[layer]) return null;
-  const [c, g] = makeCanvas(FW, FH);
+  const [c, g] = makeCanvas(FW, FH, { readback: true }); // alphaBounds, picking
   const r = p[layer](g, f, extra);
   if (r === false) return null;
   return c;
@@ -752,8 +752,9 @@ export class Engine {
     [this.back, this.backG] = makeCanvas(SW, SH);     // walls + all furniture
     this.static = buildStatic();
     this.roomMask = buildRoomMask(this.static);
-    [this.light, this.lightG] = makeCanvas(SW, SH);           // the dark, with holes where lamps are (night)
-    [this.floorLight, this.floorLightG] = makeCanvas(SW, SH); // sun patches and light pools, under the furniture
+    // the two light layers are read back (alphaBounds) each time they're redrawn
+    [this.light, this.lightG] = makeCanvas(SW, SH, { readback: true });           // the dark, with holes where lamps are (night)
+    [this.floorLight, this.floorLightG] = makeCanvas(SW, SH, { readback: true }); // sun patches and light pools, under the furniture
     this.lights = roomLights();
     this.lightBox = null;
     this.floorLightBox = null;
@@ -2247,6 +2248,19 @@ export class Engine {
         }
         if (!moved) break;
       }
+      // Above the top of the band a bubble would be sliced, first line (the name) first. It moves down
+      // to where it fits whole; if newer bubbles already sit there, they've pushed it out and it goes now.
+      b.gone = false;
+      if (bottom - h < topY) {
+        const down = topY + h;
+        let clash = false;
+        for (let j = 0; j < np && !clash; j++) {
+          const p = placed[j];
+          clash = x < p.x1 + gap && x + w > p.x0 - gap && down > p.y0 - gap && down - h < p.y1 + gap;
+        }
+        if (clash) { b.gone = true; b.dieAt = t; this._needNext = true; continue; }
+        bottom = down;
+      }
       const lift = home - bottom;
       if (b.off == null || rm) b.off = lift;
       else if (Math.abs(b.off - lift) < 0.5) b.off = lift;
@@ -2254,11 +2268,13 @@ export class Engine {
       const by = Math.round(home - b.off);
       const r = placed[np] || (placed[np] = { x0: 0, y0: 0, x1: 0, y1: 0 });
       r.x0 = x; r.x1 = x + w; r.y0 = by - h; r.y1 = by; np++;
-      b.drawX = x; b.drawY = by - h; b.tail = lift < 0.5 && b.off < 0.5;
+      // the tail only when it sits right over the head (not lifted, and not pulled down over it)
+      b.drawX = x; b.drawY = by - h; b.tail = Math.abs(lift) < 0.5 && Math.abs(b.off) < 0.5;
     }
     // older ones first so the newest sits on top
     for (let i = vis.length - 1; i >= 0; i--) {
       const b = vis[i];
+      if (b.gone) continue;
       const age = t - b.born;
       let alpha = 1;
       if (!rm) {

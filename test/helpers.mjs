@@ -12,9 +12,10 @@ export const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..'
 export const OFFLINE = process.env.OFFLINE === '1';
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The repo's own config (for the GitHub-backed checks: its repo and first admin are real).
-export function committedConfig() {
-  try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'lounge.config.json'), 'utf8')); } catch { return {}; }
+// A real lounge's config, for the GitHub-backed checks: its repo has merged PRs and its first admin is a
+// real contributor. (The root lounge.config.json is the fork placeholder and has no admins.)
+export function exampleConfig() {
+  try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', 'claude-mem.json'), 'utf8')); } catch { return {}; }
 }
 
 function portFree(port) {
