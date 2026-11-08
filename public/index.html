@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <title>Merge Lounge · claude-mem</title>
-  <meta name="description" content="A pixel hangout for everyone with a merged PR in claude-mem.">
+  <title>Merge Lounge</title>
+  <meta name="description" content="A pixel hangout for everyone with a merged PR in the project.">
   <meta name="theme-color" content="#0c0a18">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="/fonts/pixelify-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -19,9 +19,9 @@
     <canvas id="hero" aria-hidden="true"></canvas>
     <div class="hero-shade" aria-hidden="true"></div>
     <div class="landing-inner">
-      <p class="eyebrow"><span class="chip">claude-mem</span> merged contributors only</p>
-      <h1 class="title" aria-label="Merge Lounge"><span class="t1">MERGE</span><span class="t2">LOUNGE</span></h1>
-      <p class="lede">A pixel hangout for everyone who's landed a PR in claude-mem. Walk around, grab a kombucha, ring the merge gong, talk shop.</p>
+      <p class="eyebrow"><span class="chip cfg-project"></span> merged contributors only</p>
+      <h1 class="title" id="landTitle" aria-label="Merge Lounge"><span class="t1" id="landT1">MERGE</span><span class="t2" id="landT2">LOUNGE</span></h1>
+      <p class="lede">A pixel hangout for everyone who's landed a PR in <span class="cfg-project"></span>. Walk around, grab a kombucha, ring the merge gong, talk shop.</p>
       <p class="live"><i class="dot"></i><span><b id="liveOnline">·</b>&nbsp;inside now</span>&ensp;·&ensp;<span><b id="liveContrib">·</b>&nbsp;contributors</span>&ensp;·&ensp;<span><b id="livePRs">·</b>&nbsp;PRs merged</span></p>
 
       <form class="card" id="step1" autocomplete="off">
@@ -31,7 +31,7 @@
           <input id="gh" name="gh" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="your-handle" maxlength="39" required>
           <button class="btn primary" id="checkBtn" type="submit">Check in</button>
         </div>
-        <p class="fine">We only look at public stuff: your merged PRs on claude-mem and one public gist. No GitHub permissions, no OAuth.</p>
+        <p class="fine">We only look at public stuff: your merged PRs on <span class="cfg-project"></span> and one public gist. No GitHub permissions, no OAuth.</p>
         <p class="err" id="err1" role="alert"></p>
       </form>
 
@@ -64,14 +64,14 @@
 
       <div class="card" id="stepNo" hidden>
         <p class="found">No merged PRs found for <b id="noLogin"></b> yet.</p>
-        <p>The lounge is for people with a merged PR in <a href="https://github.com/thedotmack/claude-mem" target="_blank" rel="noopener noreferrer">claude-mem</a>. Land one and come back — the door's always open.</p>
+        <p>The lounge is for people with a merged PR in <a class="cfg-repo" target="_blank" rel="noopener noreferrer"></a>. Land one and come back — the door's always open.</p>
         <div class="row gap">
-          <a class="btn primary" href="https://github.com/thedotmack/claude-mem/issues" target="_blank" rel="noopener noreferrer">Find an issue</a>
+          <a class="btn primary" id="findIssue" target="_blank" rel="noopener noreferrer">Find an issue</a>
           <button class="btn ghost" id="noBack" type="button">Try another name</button>
         </div>
       </div>
     </div>
-    <footer class="landing-foot">the skyline runs on San Francisco time · <a href="https://github.com/thedotmack/claude-mem" target="_blank" rel="noopener noreferrer">claude-mem on GitHub</a></footer>
+    <footer class="landing-foot">the skyline runs on <span class="cfg-city"></span> time · <a class="cfg-home" target="_blank" rel="noopener noreferrer"></a></footer>
   </section>
 
   <!-- ============ the room ============ -->
@@ -79,7 +79,7 @@
     <canvas id="stage" aria-label="The lounge. Tap the floor to walk, tap people to see who they are."></canvas>
 
     <header class="topbar" id="topbar">
-      <div class="brand"><span class="mark" aria-hidden="true"></span><span class="name">MERGE LOUNGE</span></div>
+      <div class="brand"><span class="mark" aria-hidden="true"></span><span class="name" id="brandName">MERGE LOUNGE</span></div>
       <div class="pill" id="onlinePill" title="people in the lounge"><i class="dot"></i><span id="onlineCount">1</span><span class="pill-l">inside</span></div>
       <nav class="actions" aria-label="Lounge">
         <button class="iconbtn" id="btnFame" type="button" aria-label="Wall of fame">
@@ -170,7 +170,7 @@
 
     <div class="menu" id="menu" hidden>
       <button type="button" id="mHelp">How it works</button>
-      <a href="https://github.com/thedotmack/claude-mem" target="_blank" rel="noopener noreferrer">claude-mem on GitHub</a>
+      <a class="cfg-home" target="_blank" rel="noopener noreferrer"></a>
       <button type="button" id="mLogout">Log out</button>
     </div>
 
@@ -187,7 +187,7 @@
           <li><code>/w @someone hi</code> — whisper (only you two see it)</li>
           <li><code>/who</code> — who's here · <code>/stats</code> — lounge numbers · <code>/gong</code></li>
         </ul>
-        <p class="muted">The window shows the valley in real San Francisco time. The signs on the buildings keep rebranding. That's just how it is out there.</p>
+        <p class="muted">The window shows the valley in real <span class="cfg-city"></span> time. The signs on the buildings keep rebranding. That's just how it is out there.</p>
       </div>
     </aside>
 
@@ -200,6 +200,6 @@
     </div>
   </section>
 
-  <noscript><p class="noscript">The Merge Lounge needs JavaScript.</p></noscript>
+  <noscript><p class="noscript">This lounge needs JavaScript.</p></noscript>
 </body>
 </html>

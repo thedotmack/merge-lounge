@@ -1,0 +1,35 @@
+# Fly.io: one always-on Machine with a volume for the lounge's state.
+# The repo, admins and everything else live in lounge.config.json.
+app = "CHANGE-ME-merge-lounge"
+primary_region = "ord"            # pick yours: fly platform regions
+
+kill_signal = "SIGTERM"           # server.js handles SIGTERM and SIGINT; default is SIGINT
+kill_timeout = 30                 # seconds; default 5, max 300 (best-effort)
+
+[env]
+  PORT = "8080"
+  STATE_DIR = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"      # "If "off", Fly Proxy will never stop Machines"
+  auto_start_machines = true      # documented combo with "off": restarts a Machine that stopped itself
+  min_machines_running = 1        # no effect while autostop is "off"; keeps one up if someone flips it to "stop"
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/api/status"
+
+[[mounts]]
+  source = "lounge_state"
+  destination = "/data"
+  initial_size = "1gb"            # only used if fly launch/deploy has to create the volume
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

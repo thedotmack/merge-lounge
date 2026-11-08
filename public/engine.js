@@ -4,7 +4,8 @@
 import { W, H, FURNITURE, WALL_ITEMS, WALL_H, WINDOW, STEP_MS, dirFrom, reachable, furnitureAt, hash32, LOOK } from '/shared/world.js';
 import { fillPoly, line, ellipsePts, shade, mix, pixelText, textWidth, rng, makeCanvas } from './pixel.js';
 import { avatarSprite, AV_AX, AV_AY } from './avatar.js';
-import { Valley, sfHour, skyAt } from './valley.js';
+import { Valley, localHour, skyAt } from './valley.js';
+import { fill, defaultConfig } from '/shared/config.js';
 
 export const SW = 520, SH = 428, OX = 236, OY = 154;
 export const P = (gx, gy, z = 0) => [OX + (gx - gy) * 16, OY + (gx + gy) * 8 - z];
@@ -368,23 +369,35 @@ function buildPoster() {
   g.fillStyle = '#2b2d42'; pixelText(g, 'LGTM', 7, 32);
   return c;
 }
-function buildNeon(on) {
-  const [c, g] = makeCanvas(47, 34);
-  g.fillStyle = '#17112c'; g.fillRect(0, 0, 47, 34);
-  g.fillStyle = '#2a2050'; g.fillRect(0, 0, 47, 1); g.fillRect(0, 33, 47, 1); g.fillRect(0, 0, 1, 34); g.fillRect(46, 0, 1, 34);
+// The neon sign: a small top line and a big bottom line (config.neon), centred, each scaled to fit.
+function buildNeon(on, neon = {}) {
+  const NW = 47, NH = 34, fitW = NW - 2;
+  const [c, g] = makeCanvas(NW, NH);
+  g.fillStyle = '#17112c'; g.fillRect(0, 0, NW, NH);
+  g.fillStyle = '#2a2050'; g.fillRect(0, 0, NW, 1); g.fillRect(0, 33, NW, 1); g.fillRect(0, 0, 1, NH); g.fillRect(46, 0, 1, NH);
   const orange = on ? '#ff8a4c' : '#7a4630', pink = on ? '#ff5fa2' : '#6a2f4a';
+  let top = String(neon.top || '');
+  while (top && textWidth(top) > fitW) top = top.slice(0, -1);
+  let bottom = String(neon.bottom || '');
+  while (bottom && textWidth(bottom) > fitW) bottom = bottom.slice(0, -1);
+  const bs = [3, 2, 1].find((k) => textWidth(bottom, k) <= fitW) || 1;
+  const tx = Math.floor((NW - textWidth(top)) / 2), ty = 5;
+  // the big line sits in rows 13-27 (15 px, a scale-3 glyph); smaller scales centre in that band,
+  // or in the whole sign when there is no top line
+  const band = top ? [13, 15] : [3, 25];
+  const bx = Math.floor((NW - textWidth(bottom, bs)) / 2), by = band[0] + Math.floor((band[1] - 5 * bs) / 2);
   if (on) {
     g.globalAlpha = 0.3;
     g.fillStyle = orange;
-    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) pixelText(g, 'CLAUDE', 12 + dx, 5 + dy);
+    if (top) for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) pixelText(g, top, tx + dx, ty + dy);
     g.fillStyle = pink;
-    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) pixelText(g, 'MEM', 7 + dx, 13 + dy, 3);
+    if (bottom) for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) pixelText(g, bottom, bx + dx, by + dy, bs);
     g.globalAlpha = 1;
   }
-  g.fillStyle = orange; pixelText(g, 'CLAUDE', 12, 5);
-  g.fillStyle = pink; pixelText(g, 'MEM', 7, 13, 3);
+  g.fillStyle = orange; if (top) pixelText(g, top, tx, ty);
+  g.fillStyle = pink; if (bottom) pixelText(g, bottom, bx, by, bs);
   g.fillStyle = on ? '#ffd2e6' : pink;
-  for (let x = 8; x < 40; x += 5) g.fillRect(x, 14, 1, 1);
+  if (bottom && bs === 3) for (let x = bx + 1; x < bx + textWidth(bottom, bs); x += 5) g.fillRect(x, by + 1, 1, 1);
   g.fillStyle = on ? '#33e1ff' : '#1d4a55';
   g.fillRect(6, 30, 35, 1);
   return c;
@@ -526,18 +539,20 @@ function buildStatic() {
 
 // ------------------------------------------------------------------ engine
 export class Engine {
-  constructor(canvas) {
+  // opts.config: the lounge config from /api/config (lettering, bot name, time zone)
+  constructor(canvas, opts = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    const cfg = this.cfg = opts.config || defaultConfig();
     [this.scene, this.sg] = makeCanvas(SW, SH);
     this.static = buildStatic();
-    this.valley = new Valley();
+    this.valley = new Valley(undefined, { names: cfg.skyline.names, billboards: cfg.skyline.billboards, blimp: cfg.blimp, timezone: cfg.timezone });
     this.winW = Math.round((WINDOW.b - WINDOW.a) * 16) + 2;
     this.winH = WINDOW.hi - WINDOW.lo;
     [this.sky, this.skyG] = makeCanvas(this.winW, this.winH);
     [this.tick, this.tickG] = makeCanvas(Math.round(15 * 16), 7);
-    this.neonOn = buildNeon(true);
-    this.neonOff = buildNeon(false);
+    this.neonOn = buildNeon(true, cfg.neon);
+    this.neonOff = buildNeon(false, cfg.neon);
     this.fameBuf = buildFame(null);
     this.fameText = fameText(null);
     this.furn = FURNITURE.map((f) => ({ f, base: buildFurnSprite(f, 'base'), front: buildFurnSprite(f, 'front') }));
@@ -558,7 +573,7 @@ export class Engine {
     this.userZoom = null;
     this.alphaCache = new WeakMap();
     this.joinedAt = 0;
-    this.lastHour = sfHour();
+    this.lastHour = localHour(cfg.timezone);
     this.hourAt = 0;
     this.resize();
   }
@@ -807,7 +822,7 @@ export class Engine {
     const now = Date.now();
 
     // hour refresh once a minute
-    if (t - this.hourAt > 60_000) { this.lastHour = sfHour(); this.hourAt = t; }
+    if (t - this.hourAt > 60_000) { this.lastHour = localHour(this.cfg.timezone); this.hourAt = t; }
     const sky = skyAt(this.lastHour);
 
     // the view out the window
@@ -915,8 +930,11 @@ export class Engine {
     g.fillStyle = '#1a1206';
     for (let x = 0; x < w; x += 2) for (let y = 1; y < 6; y += 2) g.fillRect(x, y, 1, 1);
     const s = this.stats;
-    const pl = (n, w) => `${n} ${w}${n === 1 ? '' : 'S'}`;
-    const msg = `  * ${s.contributors} MERGED CONTRIBUTORS  * ${Number(s.mergedPRs).toLocaleString('en-US')} PRS MERGED  * ${s.online} IN THE LOUNGE  * ${pl(s.gongs, 'GONG')} TODAY  * CONTEXT IS ALL YOU NEED  * ${pl(s.deploys, 'DEPLOY')} TO PROD TODAY  * WELCOME TO THE MERGE LOUNGE `;
+    const vars = {
+      contributors: Number(s.contributors) || 0, mergedPRs: Number(s.mergedPRs) || 0, online: Number(s.online) || 0,
+      gongs: Number(s.gongs) || 0, deploys: Number(s.deploys) || 0, loungeName: this.cfg.loungeName,
+    };
+    const msg = this.cfg.ticker.map((line) => `  * ${fill(line, vars)}`).join('').toUpperCase() + ' ';
     // an LED ticker steps one character at a time, which also keeps every glyph crisp on the wall
     const tw = msg.length * 4;
     const off = (Math.floor(t / 170) * 4) % tw;
@@ -1173,7 +1191,7 @@ export class Engine {
     for (const a of ordered) {
       const { u, cx, cy, sp } = a;
       const [dx, dy] = this.toDevice(cx, cy + 3);
-      let label = u.npc ? 'observer · bot' : u.login;
+      let label = u.npc ? `${u.login} · bot` : u.login;
       if (u.admin) label = '★ ' + label;
       if (u.afk) label += ' · away';
       const tw = c.measureText(label).width + 6 * d, th = 13 * d;

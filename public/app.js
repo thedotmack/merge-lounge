@@ -1,8 +1,9 @@
 import { Engine } from './engine.js';
-import { Valley, sfHour, skyAt } from './valley.js';
+import { Valley, localHour, skyAt } from './valley.js';
 import { makeCanvas } from './pixel.js';
 import { avatarSprite } from './avatar.js';
 import { LOOK, REACTIONS, FURNITURE, defaultLook, hash32 } from '/shared/world.js';
+import { resolveConfig, defaultConfig, slug } from '/shared/config.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -29,6 +30,43 @@ function toast(text, ms = 3200) {
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 260); }, ms);
 }
 
+// =================================================================== lounge config
+// Everything project-specific (names, links, the sign) comes from GET /api/config. If that fails the
+// page still works with the built-in defaults.
+let CFG = defaultConfig();
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store', signal: AbortSignal.timeout?.(5000) });
+    if (res.ok) CFG = resolveConfig(await res.json()).config;
+  } catch { /* keep the defaults */ }
+  applyConfig();
+}
+const githubUrl = () => (CFG.repo ? `https://github.com/${CFG.repo}` : CFG.project.url);
+const prsUrl = (login) => `${githubUrl()}/pulls?q=is%3Apr+is%3Amerged+author%3A${encodeURIComponent(login)}`;
+function setLink(a, href, text) {
+  if (href) a.href = href; else a.removeAttribute('href');
+  if (text !== undefined) a.textContent = text;
+}
+function applyConfig() {
+  const c = CFG, proj = c.project.name;
+  document.title = `${c.loungeName} · ${proj}`;
+  $('meta[name="description"]')?.setAttribute('content', `A pixel hangout for everyone with a merged PR in ${proj}.`);
+  if (/^#[0-9a-f]{6}$/i.test(c.theme.accent)) document.documentElement.style.setProperty('--accent', c.theme.accent);
+  const [w1, ...rest] = c.loungeName.toUpperCase().split(/\s+/);
+  $('#landTitle').setAttribute('aria-label', c.loungeName);
+  $('#landT1').textContent = w1;
+  $('#landT2').textContent = rest.join(' ');
+  $('#brandName').textContent = c.loungeName.toUpperCase();
+  for (const el of $$('.cfg-project')) el.textContent = proj;
+  for (const el of $$('.cfg-city')) el.textContent = c.skyline.city;
+  for (const a of $$('a.cfg-repo')) setLink(a, c.project.url, proj);
+  setLink($('#findIssue'), githubUrl() ? `${githubUrl()}/issues` : '');
+  const onGitHub = /^https:\/\/github\.com\//i.test(c.project.url);
+  for (const a of $$('a.cfg-home')) setLink(a, c.project.url, onGitHub ? `${proj} on GitHub` : `${proj} ↗`);
+}
+const botName = () => CFG.bot.name;
+const rackLabel = (f) => `${botName().toUpperCase()}-${String(f?.label || '').match(/\d+$/)?.[0] || '01'}`;
+
 async function api(path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = 'Bearer ' + token;
@@ -43,7 +81,7 @@ let heroStop = null;
 function startHero() {
   const cv = $('#hero');
   const ctx = cv.getContext('2d');
-  const valley = new Valley(7331);
+  const valley = new Valley(7331, { names: CFG.skyline.names, billboards: CFG.skyline.billboards, blimp: CFG.blimp, timezone: CFG.timezone });
   const [buf, bg] = makeCanvas(2, 2);
   let running = true;
   const frame = () => {
@@ -57,7 +95,7 @@ function startHero() {
     const bw = Math.ceil(Wd / s), fullH = Math.ceil(Hd / s);
     const bh = Math.min(fullH, Math.max(150, Math.round(bw * 0.95)));
     if (buf.width !== bw || buf.height !== bh) { buf.width = bw; buf.height = bh; bg.imageSmoothingEnabled = false; }
-    const hour = sfHour();
+    const hour = localHour(CFG.timezone);
     valley.render(bg, bw, bh, Date.now(), { speed: 10, hour });
     ctx.imageSmoothingEnabled = false;
     const top = (fullH - bh) * s;
@@ -114,7 +152,7 @@ $('#step1').addEventListener('submit', async (e) => {
       $('#foundLogin').textContent = '@' + r.login;
       $('#foundCount').textContent = `${fmt(r.merged)} merged PR${r.merged === 1 ? '' : 's'}`;
       $('#code').textContent = r.code;
-      $('#cli').textContent = `echo ${r.code} | gh gist create --public -d ${r.code} -f merge-lounge.txt -`;
+      $('#cli').textContent = `echo ${r.code} | gh gist create --public -d ${r.code} -f ${slug(CFG.loungeName) || 'lounge'}.txt -`;
       $('#status2').textContent = '';
       $('#status2').className = 'status';
       showStep('step2');
@@ -182,7 +220,7 @@ $('#verifyBtn').addEventListener('click', async () => {
       }
       if (r.reason && r.reason !== 'not-found-yet') {
         st.className = 'status bad';
-        st.textContent = r.reason === 'no-challenge' ? 'That code expired — go back and check in again.' : r.reason === 'too-many-tries' ? 'Too many tries. Go back and start over.' : r.reason === 'banned' ? "This account can't check in." : r.reason === 'not-contributor' ? "GitHub doesn't show merged claude-mem PRs for this account right now." : 'Something went sideways. Try again.';
+        st.textContent = r.reason === 'no-challenge' ? 'That code expired — go back and check in again.' : r.reason === 'too-many-tries' ? 'Too many tries. Go back and start over.' : r.reason === 'banned' ? "This account can't check in." : r.reason === 'not-contributor' ? `GitHub doesn't show merged ${CFG.project.name} PRs for this account right now.` : 'Something went sideways. Try again.';
         return;
       }
       await sleep(i < 3 ? 4000 : 6000);
@@ -239,7 +277,7 @@ async function enterRoom(token) {
 }
 
 function setupRoom() {
-  const engine = state.engine = new Engine($('#stage'));
+  const engine = state.engine = new Engine($('#stage'), { config: CFG });
   const loop = (t) => { engine.render(t); requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
   window.addEventListener('resize', () => { measureInsets(); });
@@ -417,7 +455,7 @@ const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2
 function colorFor(login) {
   const u = [...state.engine.users.values()].find((x) => x.login === login);
   if (u && u.look && !u.look.bot) return LOOK.topColor[u.look.topColor];
-  if (login === 'observer') return '#ff9466';
+  if (login === botName()) return '#ff9466';
   const look = defaultLook(login || 'x');
   return LOOK.topColor[look.topColor];
 }
@@ -535,7 +573,7 @@ function setupInput() {
 
 const LABELS = {
   fridge: 'grab a kombucha', bar: 'grab a cold brew', gong: 'ring the merge gong', button: 'deploy to prod',
-  rack: 'OBSERVER-01', arcade: 'arcade', chair: 'sit', stool: 'sit', sofa: 'sit', beanbag: 'sit', armchair: 'sit',
+  rack: () => rackLabel(), arcade: 'arcade', chair: 'sit', stool: 'sit', sofa: 'sit', beanbag: 'sit', armchair: 'sit',
 };
 function hover(x, y) {
   const e = state.engine;
@@ -546,9 +584,9 @@ function hover(x, y) {
   let pointer = false;
   if (!hit) { cv.classList.remove('pointer'); return; }
   if (hit.type === 'tile') e.hoverTile = hit;
-  else if (hit.type === 'user') { pointer = true; const u = e.users.get(hit.id); if (u) e.hoverLabel = { text: u.npc ? 'observer · the lounge bot' : `@${u.login} · ${fmt(u.merged)} merged`, dx: x * e.dpr, dy: y * e.dpr }; }
+  else if (hit.type === 'user') { pointer = true; const u = e.users.get(hit.id); if (u) e.hoverLabel = { text: u.npc ? `${u.login} · the lounge bot` : `@${u.login} · ${fmt(u.merged)} merged`, dx: x * e.dpr, dy: y * e.dpr }; }
   else if (hit.type === 'furn') {
-    const l = LABELS[hit.f.kind];
+    const l = typeof LABELS[hit.f.kind] === 'function' ? LABELS[hit.f.kind]() : LABELS[hit.f.kind];
     if (l) { pointer = true; e.hoverLabel = { text: l, dx: x * e.dpr, dy: y * e.dpr }; }
   } else if (hit.type === 'wall' && hit.w.id === 'fame') { pointer = true; e.hoverLabel = { text: 'wall of fame', dx: x * e.dpr, dy: y * e.dpr }; }
   cv.classList.toggle('pointer', pointer);
@@ -566,7 +604,7 @@ function tap(x, y) {
       e.follow = true;
       return;
     }
-    if (f.kind === 'rack') return toast(`${f.label}: humming along. ${fmt(e.stats.mergedPRs)} merged PRs indexed.`);
+    if (f.kind === 'rack') return toast(`${rackLabel(f)}: humming along. ${fmt(e.stats.mergedPRs)} merged PRs indexed.`);
     if (f.kind === 'arcade') return toast(f.hue === 'pink' ? 'PONG.AI — insert token. (you have plenty.)' : 'CONTEXT INVADERS — high score: whoever merged last.');
     if (f.kind === 'plant') return toast('🪴 well watered. unlike your test suite.');
     if (f.kind === 'lavalamp') return toast('it just vibes.');
@@ -579,7 +617,7 @@ function tap(x, y) {
     if (hit.w.id === 'fame') return openFame();
     if (hit.w.id === 'door') return toast("the door's always open.");
     if (hit.w.id === 'poster') return toast('MERGED. LGTM.');
-    if (hit.w.id === 'neon') return toast('claude-mem · persistent memory for AI coding agents');
+    if (hit.w.id === 'neon') return toast(CFG.project.tagline ? `${CFG.project.name} · ${CFG.project.tagline}` : CFG.project.name);
     return;
   }
   if (hit.type === 'tile' && hit.ok) {
@@ -722,7 +760,7 @@ function renderFame() {
     if (q && !c.login.toLowerCase().includes(q)) return;
     const li = document.createElement('li');
     const a = document.createElement('a');
-    a.href = `https://github.com/thedotmack/claude-mem/pulls?q=is%3Apr+is%3Amerged+author%3A${encodeURIComponent(c.login)}`;
+    a.href = prsUrl(c.login);
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
     const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = '#' + (i + 1);
@@ -767,19 +805,19 @@ function openProfile(id) {
   };
   if (u.npc) {
     img.hidden = true;
-    $('#pfName').textContent = 'observer';
+    $('#pfName').textContent = u.login;
     $('#pfLine1').textContent = "The lounge's resident bot. It watches, takes notes, and greets people at the door.";
-    $('#pfLine2').textContent = 'Say "observer" in chat and it might answer.';
+    $('#pfLine2').textContent = `Say "${u.login}" in chat and it might answer.`;
     btn('Ask for /stats', 'ghost', () => { send({ t: 'chat', text: '/stats' }); closeAllSheets(); });
     return;
   }
   img.hidden = false;
   img.src = `https://avatars.githubusercontent.com/${encodeURIComponent(u.login)}?s=96`;
   $('#pfName').textContent = '@' + u.login + (u.admin ? ' ★' : '');
-  $('#pfLine1').textContent = `${fmt(u.merged)} merged PR${u.merged === 1 ? '' : 's'} in claude-mem`;
+  $('#pfLine1').textContent = `${fmt(u.merged)} merged PR${u.merged === 1 ? '' : 's'} in ${CFG.project.name}`;
   const fc = state.fame?.list.find((x) => x.login.toLowerCase() === u.login.toLowerCase());
   $('#pfLine2').textContent = fc ? `first merge ${fc.first} · latest ${fc.last}` : (u.afk ? 'away from keyboard' : '');
-  const prs = `https://github.com/thedotmack/claude-mem/pulls?q=is%3Apr+is%3Amerged+author%3A${encodeURIComponent(u.login)}`;
+  const prs = prsUrl(u.login);
   if (id === state.me?.id) {
     btn('Change look', 'primary', () => openWardrobe(false));
     btn('Dance', 'ghost', () => { send({ t: 'emote', e: 'dance' }); closeAllSheets(); });
@@ -870,6 +908,7 @@ if (new URLSearchParams(location.search).has('debug')) window.__lounge = { state
 
 // =================================================================== boot
 (async function boot() {
+  await loadConfig();
   const token = ls.get(TOKEN_KEY);
   if (token) {
     try {

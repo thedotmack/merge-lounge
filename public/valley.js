@@ -1,19 +1,9 @@
 // The view out the window: a procedurally drawn "AI valley" that drifts by like a TV bumper —
 // mountains, a skyline of made-up startups whose rooftop signs keep rebranding, billboards on the
-// freeway, a blimp. The sky follows the actual time of day in San Francisco.
+// freeway, a blimp. The sky follows the actual time of day in the lounge's time zone.
+// The lettering (sign names, billboards, blimp) comes from the lounge config.
 import { rng, mix, shade, pixelText, textWidth } from './pixel.js';
-
-export const NAMES = [
-  'TOKENLY', 'CTXBASE', 'VECTORLY', 'PROMPTCO', 'AGI SOON', 'GPU BARN', 'MEMLABS', 'LGTM CAP',
-  'SHIPIT', '10X LABS', 'RAGTAG', 'EVALS4U', 'DIFFCO', 'HOTFIX', 'SERIES Z', 'INFER.IO',
-  'STEALTH', 'YOLO OPS', 'MERGEINC', 'NEURALLY', 'COMPUTE+', 'PIVOTLY', 'ATTENTIO', 'WEIGHTS',
-];
-export const BILLBOARDS = [
-  ['CONTEXT IS', 'ALL YOU NEED'], ['YOUR AGENT', 'FORGOT AGAIN?'], ['MEMORY >', 'VIBES'],
-  ['HIRING: 10X', 'PROMPTER'], ['SHIP ON', 'FRIDAYS'], ['TOKENS: CHEAP', 'MEMORY: RARE'],
-  ['CLAUDE-MEM', 'REMEMBERS'], ['AGI BY Q3', '(MAYBE)'], ['SESSION', 'AMNESIA? NAH'],
-  ['MERGED >', 'PERFECT'], ['LGTM', 'SHIP IT'], ['ZERO-SHOT', 'ZERO SLEEP'],
-];
+import { DEFAULTS, deriveBlimp } from '/shared/config.js';
 const NEON = ['#ff5fa2', '#33e1ff', '#ff9a3c', '#7dff8a', '#c08bff', '#ffe066'];
 
 // sky keyframes: hour → [top, bottom, night]
@@ -39,18 +29,27 @@ export function skyAt(hour) {
   return { top: mix(a[1], b[1], k), bottom: mix(a[2], b[2], k), night: a[3] + (b[3] - a[3]) * k };
 }
 
-export function sfHour() {
+// The hour (with minutes as a fraction) in the lounge's time zone. ?tod=21 forces one for testing.
+export function localHour(timeZone = DEFAULTS.timezone) {
   const q = new URLSearchParams(location.search).get('tod');
   if (q !== null && q !== '' && !Number.isNaN(Number(q))) return ((Number(q) % 24) + 24) % 24;
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(new Date());
+  let fmt;
+  try { fmt = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }); }
+  catch { fmt = new Intl.DateTimeFormat('en-US', { timeZone: DEFAULTS.timezone, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }); }
+  const parts = fmt.formatToParts(new Date());
   const h = Number(parts.find((p) => p.type === 'hour').value);
   const m = Number(parts.find((p) => p.type === 'minute').value);
   return h + m / 60;
 }
 
 export class Valley {
-  constructor(seed = 20250901) {
+  // text: { names, billboards, blimp, timezone } from the lounge config
+  constructor(seed = 20250901, text = {}) {
     const r = rng(seed);
+    this.names = Array.isArray(text.names) && text.names.length ? text.names : DEFAULTS.skyline.names;
+    const boards = Array.isArray(text.billboards) && text.billboards.length ? text.billboards : DEFAULTS.skyline.billboards;
+    this.blimpText = typeof text.blimp === 'string' && text.blimp ? text.blimp : deriveBlimp('');
+    this.timezone = text.timezone || DEFAULTS.timezone;
     this.worldW = 1040;
     this.buildings = [];
     let x = 0, signCount = 0;
@@ -75,7 +74,7 @@ export class Valley {
       x += w + Math.floor(r() * 3);
     }
     this.stars = Array.from({ length: 110 }, () => ({ x: r() * this.worldW, y: r() * 0.55, p: r() * 6.28, b: r() }));
-    this.boards = Array.from({ length: 5 }, (_, i) => ({ x: 60 + i * (this.worldW / 5) + r() * 60, text: BILLBOARDS[(i * 5 + Math.floor(r() * 3)) % BILLBOARDS.length], ci: i }));
+    this.boards = Array.from({ length: 5 }, (_, i) => ({ x: 60 + i * (this.worldW / 5) + r() * 60, text: boards[(i * 5 + Math.floor(r() * 3)) % boards.length], ci: i }));
     this.palms = Array.from({ length: 7 }, (_, i) => ({ x: i * (this.worldW / 7) + r() * 70, h: 0.28 + r() * 0.16, lean: r() * 2 - 1 }));
     this.clouds = Array.from({ length: 6 }, () => ({ x: r() * this.worldW, y: 0.08 + r() * 0.25, w: 14 + Math.floor(r() * 24), s: 0.4 + r() * 0.8 }));
     this.cars = Array.from({ length: 22 }, (_, i) => ({ o: r() * this.worldW, v: 18 + r() * 22, lane: i % 2, c: ['#e63946', '#f4f1de', '#3a86ff', '#2b2d42', '#ffbe0b', '#9aa0b5'][Math.floor(r() * 6)] }));
@@ -86,9 +85,10 @@ export class Valley {
     const epoch = Math.floor(t / period);
     const n = this.signCount || 1;
     const changes = epoch >= k ? Math.floor((epoch - k) / n) + 1 : 0;
-    const idx = (k * 5 + changes) % NAMES.length;
+    const N = this.names;
+    const idx = (k * 5 + changes) % N.length;
     const glitch = epoch % n === k && t % period < 700;
-    return { name: NAMES[idx], prev: NAMES[(idx + NAMES.length - 1) % NAMES.length], glitch, gt: (t % period) / 700 };
+    return { name: N[idx], prev: N[(idx + N.length - 1) % N.length], glitch, gt: (t % period) / 700 };
   }
 
   // Draw into g over [0,W)x[0,H). t in ms. opts.speed in px/s of the city layer.
@@ -102,7 +102,7 @@ export class Valley {
   render(g, W, H, t, opts = {}) {
     this.deferText = !!opts.deferText;
     this.texts = [];
-    const hour = opts.hour ?? sfHour();
+    const hour = opts.hour ?? localHour(this.timezone);
     const sky = skyAt(hour);
     const night = sky.night;
     const speed = opts.speed ?? 3;
@@ -288,7 +288,7 @@ export class Valley {
       g.fillRect(bx - 3, by + 2, 4, 2); g.fillRect(bx - 3, by + bh - 4, 4, 2);
       g.fillRect(bx + 13, by + bh, 8, 2);
       g.fillStyle = '#f26b3a';
-      this.text(g, 'CMEM', bx + 9, by + 3);
+      this.text(g, this.blimpText, bx + Math.floor((bw - textWidth(this.blimpText)) / 2), by + 3);
       if (night > 0.5 && Math.floor(t / 600) % 2) { g.fillStyle = '#ff3b3b'; g.fillRect(bx + bw - 1, by + 5, 1, 1); }
     }
 
