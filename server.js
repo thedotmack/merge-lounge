@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -22,6 +23,7 @@ const PORT = Number(process.env.PORT || 8080);
 const STATE_DIR = process.env.STATE_DIR || path.join(ROOT, 'state');
 const CONFIG_PATH = process.env.CONFIG_PATH || path.join(ROOT, 'lounge.config.json');
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
+const OFFLINE = process.env.OFFLINE === '1'; // tests: never call GitHub (lookups answer "github-down")
 
 // ---------------------------------------------------------------- config
 function loadConfig() {
@@ -52,6 +54,32 @@ const TZ = CFG.timezone;
 const UA = `merge-lounge (${REPO} contributor lounge)`;
 
 fs.mkdirSync(STATE_DIR, { recursive: true });
+const sameRepo = (r) => typeof r === 'string' && r.toLowerCase() === REPO.toLowerCase();
+const SNAPSHOT_FILE = path.join(STATE_DIR, 'contributors.json');
+
+// STATE_DIR/lounge.json says which repo this state belongs to. If the repo changes, sessions, chat
+// history, daily counters and people found live belonged to another lounge, so they are cleared before
+// anything loads (profiles stay: looks and bans follow the GitHub account). With no marker yet, the
+// state is adopted, unless the contributor list in it was built for another repo.
+(function claimStateDir() {
+  const marker = path.join(STATE_DIR, 'lounge.json');
+  let prev = '', from = 'lounge.json';
+  try { prev = String(JSON.parse(fs.readFileSync(marker, 'utf8')).repo || ''); } catch { /* none yet */ }
+  if (!prev) {
+    from = 'contributors.json';
+    try { const snap = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8')); if (typeof snap?.repo === 'string') prev = snap.repo; } catch { /* none */ }
+  }
+  if (prev && sameRepo(prev) && from === 'lounge.json') return;
+  if (prev && !sameRepo(prev)) {
+    for (const f of ['sessions.json', 'chat.json', 'daily.json', 'contributors-extra.json']) {
+      for (const x of [f, f + '.tmp']) { try { fs.rmSync(path.join(STATE_DIR, x), { force: true }); } catch { /* ignore */ } }
+    }
+    console.log(`state: ${STATE_DIR} was ${prev}'s lounge (says ${from}); cleared its sessions, chat history, daily counters and live-found contributors`);
+  }
+  const tmp = `${marker}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ repo: REPO, since: new Date().toISOString() }));
+  fs.renameSync(tmp, marker);
+})();
 
 // ---------------------------------------------------------------- storage
 class JsonStore {
@@ -99,8 +127,6 @@ const daily = new JsonStore('daily.json', { day: '', gongs: 0, deploys: 0, messa
 // The contributor snapshot lives in STATE_DIR and says which repo it was built for. One for another
 // repo (or none at all) is never used: a fresh one is built in the background, and until it lands
 // check-in asks GitHub about each person directly.
-const SNAPSHOT_FILE = path.join(STATE_DIR, 'contributors.json');
-const sameRepo = (r) => typeof r === 'string' && r.toLowerCase() === REPO.toLowerCase();
 function readSnapshot() {
   let snap;
   try { snap = JSON.parse(fs.readFileSync(SNAPSHOT_FILE, 'utf8')); }
@@ -118,12 +144,16 @@ if (bootSnap.ok) {
   totalMergedPRs = Number(bootSnap.snap.total_merged_prs) || 0;
   snapshotState = 'ready';
 }
-// People found live after the snapshot. Older entries carry no repo tag, so they're only trusted
-// next to a snapshot for this repo.
-for (const [k, c] of Object.entries(extraContrib.data)) {
-  if (!c || typeof c.login !== 'string') continue;
-  if (c.repo ? !sameRepo(c.repo) : !bootSnap.ok) continue;
-  if (!contributors.has(k)) contributors.set(k, c);
+// People found live after the snapshot, each tagged with the repo they were found in. Entries for
+// another repo, or with no tag (written before tags existed, repo unknown), are dropped: the next
+// snapshot or a live lookup finds those people again if they belong here.
+{
+  let dropped = 0;
+  for (const [k, c] of Object.entries(extraContrib.data)) {
+    if (!c || typeof c.login !== 'string' || !sameRepo(c.repo)) { delete extraContrib.data[k]; dropped++; continue; }
+    if (!contributors.has(k)) contributors.set(k, c);
+  }
+  if (dropped) { console.log(`contributors: dropped ${dropped} live-found entr${dropped === 1 ? 'y' : 'ies'} not tagged with ${REPO}`); extraContrib.flush(); }
 }
 
 const HISTORY_MAX = 150;
@@ -149,17 +179,21 @@ const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const LOGIN_RE = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/i;
 const normLogin = (s) => (typeof s === 'string' ? s : '').trim().replace(/^@/, '').replace(/^https?:\/\/github\.com\//i, '').replace(/\/.*$/, '');
 
-// The client address as the hosting proxy saw it. Fly sets Fly-Client-IP. Other hosts name their own
-// header (Railway: X-Real-IP) via CLIENT_IP_HEADER. X-Forwarded-For is never read on its own: the
-// client writes the first hop, and on Fly the last hop is the app's own address.
+// The client address as the hosting proxy saw it. Only one header is ever read, and only one the host's
+// proxy writes itself: CLIENT_IP_HEADER if set (Railway: x-real-ip, Render: cf-connecting-ip), else
+// Fly-Client-IP when running on Fly (Fly sets FLY_APP_NAME in every Machine). Anywhere else a client
+// could send that header itself, so it is ignored. X-Forwarded-For is never trusted on its own: the
+// client writes the first hop, and on Fly the last hop is the app's own address. A value that isn't an
+// IP address falls back to the socket address.
 const CLIENT_IP_HEADER = String(process.env.CLIENT_IP_HEADER || '').trim().toLowerCase();
+const IP_HEADER = CLIENT_IP_HEADER || (process.env.FLY_APP_NAME ? 'fly-client-ip' : '');
 function clientIp(req) {
-  const fly = req.headers['fly-client-ip'];
-  let ip = typeof fly === 'string' ? fly.trim() : '';
-  if (!ip && CLIENT_IP_HEADER) {
-    const v = req.headers[CLIENT_IP_HEADER];
-    const hops = String(Array.isArray(v) ? v[v.length - 1] : v || '').split(',').map((s) => s.trim()).filter(Boolean);
+  let ip = '';
+  if (IP_HEADER) {
+    const v = req.headers[IP_HEADER];
+    const hops = String(Array.isArray(v) ? v[v.length - 1] : v || '').slice(0, 2000).split(',').map((s) => s.trim()).filter(Boolean);
     ip = hops.length ? hops[hops.length - 1] : ''; // a list: the entry the nearest proxy added
+    if (!net.isIP(ip)) ip = '';
   }
   if (!ip) ip = req.socket.remoteAddress || '?';
   return ip.slice(0, 64);
@@ -187,7 +221,13 @@ function ipAllow(ip, cap = 30, perSec = 0.5) {
   if (!b) { b = isSharedIp(ip) ? new Bucket(cap * 10, perSec * 10) : new Bucket(cap, perSec); ipBuckets.set(ip, b); }
   return b.take();
 }
-setInterval(() => { if (ipBuckets.size > 5000) ipBuckets.clear(); }, 60_000).unref();
+// Forget addresses whose bucket has filled back up (they carry no state); a busy one keeps its limit.
+setInterval(() => {
+  if (ipBuckets.size <= 2000) return;
+  const t = now();
+  for (const [ip, b] of ipBuckets) if (b.tokens + ((t - b.t) / 1000) * b.perSec >= b.cap) ipBuckets.delete(ip);
+  if (ipBuckets.size > 50_000) ipBuckets.clear(); // memory backstop
+}, 60_000).unref();
 
 const plural = (n, word) => `${Number(n).toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
 
@@ -203,6 +243,7 @@ function ago(ms) {
 
 // ---------------------------------------------------------------- GitHub
 async function gh(url, { api = false, timeout = 9000 } = {}) {
+  if (OFFLINE) throw new Error('OFFLINE=1: no GitHub calls');
   const headers = { 'User-Agent': UA, 'Cache-Control': 'no-cache' };
   if (api) {
     headers.Accept = 'application/vnd.github+json';
@@ -305,9 +346,22 @@ function reloadSnapshot() {
   }
   extraContrib.save();
   if (snap.total_merged_prs > totalMergedPRs) totalMergedPRs = snap.total_merged_prs;
-  for (const u of users.values()) if (!u.npc) u.merged = mergedFor(u.id);
+  for (const u of users.values()) {
+    if (u.npc) continue;
+    const m = mergedFor(u.id);
+    if (m !== u.merged) { u.merged = m; broadcast({ t: 'merged', id: u.id, merged: m }); }
+  }
   snapshotState = 'ready';
+  pushStats();
   return true;
+}
+function retrySnapshotLater() {
+  if (snapshotState === 'ready') return;
+  snapshotState = 'missing';
+  console.log('contributors: trying again in 30 minutes; check-in keeps using live GitHub lookups');
+  clearTimeout(snapshotRetry);
+  snapshotRetry = setTimeout(() => refreshSnapshot('retry'), 30 * 60_000);
+  snapshotRetry.unref();
 }
 function refreshSnapshot(why = 'daily') {
   if (snapshotChild) return;
@@ -315,10 +369,10 @@ function refreshSnapshot(why = 'daily') {
   let child;
   try {
     child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'fetch-contributors.js'), '--repo', REPO, '--out', SNAPSHOT_FILE],
-      { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      { cwd: ROOT, env: { ...process.env, LOUNGE_PARENT_PID: String(process.pid) }, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     console.log(`contributors: could not start the rebuild: ${e.message}`);
-    if (snapshotState !== 'ready') snapshotState = 'missing';
+    retrySnapshotLater();
     return;
   }
   snapshotChild = child;
@@ -335,12 +389,7 @@ function refreshSnapshot(why = 'daily') {
       try { ok = reloadSnapshot(); } catch (e) { console.log(`contributors: reload failed: ${e.message}`); }
       if (ok) console.log(`contributors: snapshot ready · ${contributors.size} contributors · ${totalMergedPRs} merged PRs`);
     } else console.log(`contributors: rebuild failed (exit ${code})`);
-    if (!ok && snapshotState !== 'ready') {
-      snapshotState = 'missing';
-      console.log('contributors: trying again in 30 minutes; check-in keeps using live GitHub lookups');
-      snapshotRetry = setTimeout(() => refreshSnapshot('retry'), 30 * 60_000);
-      snapshotRetry.unref();
-    }
+    if (!ok) retrySnapshotLater();
   };
   child.on('error', (e) => { console.log(`contributors: ${e.message}`); finish(-1); });
   child.on('exit', (code) => finish(code));
@@ -698,7 +747,8 @@ const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const BOT_MENTION = new RegExp(`\\b${escRe(BOT.name)}\\b|@${escRe(BOT.name)}|\\bbot\\b.*\\?$`, 'i');
 const bot = {
-  id: BOT.name.toLowerCase(), login: BOT.name, npc: true, admin: false, merged: 0,
+  // "bot:" can't appear in a GitHub login, so a person who shares the bot's name stays a person
+  id: `bot:${BOT.name.toLowerCase()}`, login: BOT.name, npc: true, admin: false, merged: 0,
   look: { bot: true }, x: 8, y: 9, dir: 5, pose: 'stand', path: null, pathStart: 0,
   seat: null, item: null, itemUntil: 0, lastActive: now(), afk: false,
 };

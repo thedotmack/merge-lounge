@@ -4,11 +4,40 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveConfig, publicConfig, fill, DEFAULTS } from '../shared/config.js';
+import { resolveConfig, publicConfig, fill, DEFAULTS, accentInk, contrast, githubRepoOf } from '../shared/config.js';
 import { configTable } from '../scripts/config-table.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const committed = JSON.parse(fs.readFileSync(path.join(ROOT, 'lounge.config.json'), 'utf8'));
+// The root config is the fork-ready one (repo + admins); examples/claude-mem.json is a fully customised lounge.
+const root = JSON.parse(fs.readFileSync(path.join(ROOT, 'lounge.config.json'), 'utf8'));
+const committed = JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', 'claude-mem.json'), 'utf8'));
+
+test('the root lounge.config.json is just repo and admins, and resolves cleanly', () => {
+  assert.deepEqual(Object.keys(root).sort(), ['admins', 'repo']);
+  const { config: c, warnings } = resolveConfig(root, {}, { requireRepo: true });
+  assert.deepEqual(warnings, []);
+  assert.equal(c.repo, root.repo);
+  // everything else is the generic default text, worked out from the repo name
+  assert.deepEqual(c.skyline.billboards, DEFAULTS.skyline.billboards);
+  assert.deepEqual(c.bot.mention, DEFAULTS.bot.mention);
+  assert.deepEqual(c.ticker, DEFAULTS.ticker);
+  assert.equal(c.project.url, `https://github.com/${root.repo}`);
+});
+
+test('forking: changing repo in the root config leaves nothing of the original project', () => {
+  const { config: c, warnings } = resolveConfig({ ...root, repo: 'octo/hello-world', admins: ['octo'] }, {}, { requireRepo: true });
+  assert.deepEqual(warnings, []);
+  const text = JSON.stringify(c).toLowerCase();
+  for (const word of [root.repo, root.repo.split('/')[1], ...root.admins, committed.blimp, committed.codePrefix]) {
+    assert.ok(!text.includes(String(word).toLowerCase()), `forked config still mentions ${word}`);
+  }
+});
+
+test('copying the example but changing only repo is flagged', () => {
+  const { warnings } = resolveConfig({ ...committed, repo: 'octo/hello-world' }, {}, { requireRepo: true });
+  assert.equal(warnings.length, 1, warnings.join('\n'));
+  assert.match(warnings[0], new RegExp(`project.url points at ${committed.repo}, but repo is octo/hello-world`));
+});
 
 test('a config with only a repo is a complete, generic lounge', () => {
   const { config: c, warnings } = resolveConfig({ repo: 'sindresorhus/slugify' }, {}, { requireRepo: true });
@@ -38,7 +67,7 @@ test('repo names become a sign, a blimp and a code prefix', () => {
   assert.deepEqual(pick('necolas/react-native-web'), ['REACT', 'WEB', 'RNWEB', 'rnweb-lounge']);
 });
 
-test('the committed config resolves cleanly and keeps its own text', () => {
+test('the example config resolves cleanly and keeps its own text', () => {
   const { config: c, warnings } = resolveConfig(committed, {}, { requireRepo: true });
   assert.deepEqual(warnings, []);
   assert.deepEqual(c.neon, { top: committed.neon.top, bottom: committed.neon.bottom });
@@ -96,6 +125,42 @@ test('the public config has no admins, allow list or bot script', () => {
   assert.deepEqual(Object.keys(pub.bot), ['name']);
   // the browser can resolve it again and get the same thing back
   assert.deepEqual(publicConfig(resolveConfig(pub).config), pub);
+});
+
+test('unknown nested settings, non-object sections and http links are warned about', () => {
+  const { config: c, warnings } = resolveConfig({
+    repo: 'a/b', bot: { greeting: ['hi'], $note: 'fine' }, theme: { accnet: '#000000' }, neon: 'BIG', project: { url: 'http://example.com' },
+  });
+  assert.ok(warnings.some((w) => w.includes('"bot.greeting"')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('"theme.accnet"')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('"neon" should be an object')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => /project\.url should start with https:\/\//.test(w)), warnings.join('\n'));
+  assert.ok(!warnings.some((w) => w.includes('$note')));
+  assert.equal(c.project.url, 'https://github.com/a/b'); // http is not used
+  assert.equal(resolveConfig({ repo: 'a/b', project: { url: 'https://example.com/docs' } }).warnings.length, 0);
+});
+
+test('project.url naming another GitHub repo is warned about', () => {
+  assert.equal(githubRepoOf('https://github.com/Owner/Name.git'), 'Owner/Name');
+  assert.equal(githubRepoOf('https://github.com/owner/name/tree/main'), 'owner/name');
+  assert.equal(githubRepoOf('https://github.com/owner'), '');
+  assert.equal(githubRepoOf('https://example.com/a/b'), '');
+  const same = resolveConfig({ repo: 'Owner/Name', project: { url: 'https://github.com/owner/name/issues' } });
+  assert.deepEqual(same.warnings, []);
+  const other = resolveConfig({ repo: 'me/mine', project: { url: 'https://github.com/them/theirs' } });
+  assert.equal(other.warnings.length, 1);
+  assert.match(other.warnings[0], /them\/theirs.*me\/mine/);
+});
+
+test('button text on the accent colour stays readable', () => {
+  for (const accent of ['#f26b3a', '#ffeb3b', '#7dff8a', '#1a237e', '#000000', '#5b2c83', '#2e7d32', '#808080', '#ff0000']) {
+    const ink = accentInk(accent);
+    const other = ink === '#1b1007' ? '#fff8ef' : '#1b1007';
+    assert.ok(contrast(accent, ink) >= contrast(accent, other), `${accent}: ${ink}`);
+    assert.ok(contrast(accent, ink) >= 3.9, `${accent} with ${ink}: ${contrast(accent, ink).toFixed(2)}`);
+  }
+  assert.equal(accentInk('#f26b3a'), '#1b1007'); // the default keeps its dark text
+  assert.equal(accentInk('#1a237e'), '#fff8ef'); // a dark accent gets light text
 });
 
 test('fill handles numbers, words and plurals', () => {

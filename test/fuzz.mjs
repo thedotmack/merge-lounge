@@ -7,16 +7,10 @@ import { WebSocket } from 'ws';
 import { sleep, makeState, startServer, recorder, cleanup } from './helpers.mjs';
 
 const R = recorder('fuzz test');
-const st = makeState({
-  config: { repo: 'example-org/fuzz-target', bot: { name: 'fuzzbot' } },
-  snapshot: { repo: 'example-org/fuzz-target', generated: new Date().toISOString(), total_merged_prs: 3, contributors: [{ login: 'test-member', merged: 3, first: '2026-01-01', last: '2026-01-02' }] },
-  testLogins: ['test-z'],
-});
-const srv = await startServer({ stateDir: st.stateDir, configPath: st.configPath, env: { ADMINS: 'test-z' } });
-const port = srv.port;
+let st, srv, port; // set up inside the try below, so a failed start still cleans up
 
 async function healthy() {
-  if (!srv.alive()) return false;
+  if (!srv?.alive()) return false;
   try { const r = await fetch(`${srv.base}/api/status`, { signal: AbortSignal.timeout(3000) }); return r.ok; } catch { return false; }
 }
 
@@ -97,6 +91,13 @@ const rawCases = [
 ];
 
 try {
+  st = makeState({
+    config: { repo: 'example-org/fuzz-target', bot: { name: 'fuzzbot' } },
+    snapshot: { repo: 'example-org/fuzz-target', generated: new Date().toISOString(), total_merged_prs: 3, contributors: [{ login: 'test-member', merged: 3, first: '2026-01-01', last: '2026-01-02' }] },
+    testLogins: ['test-z'],
+  });
+  srv = await startServer({ stateDir: st.stateDir, configPath: st.configPath, env: { ADMINS: 'test-z' } });
+  port = srv.port;
   ok0: {
     const before = await healthy();
     R.ok('server up before fuzzing', before);
@@ -123,10 +124,10 @@ try {
 } catch (e) {
   R.ok('fuzz test ran to the end', false, e.stack || e.message);
 } finally {
-  R.ok('server process still running at the end', srv.alive());
-  await srv.stop();
-  cleanup(st.dir);
+  R.ok('server process still running at the end', !!srv?.alive());
+  await srv?.stop();
+  if (st) cleanup(st.dir);
 }
 const fails = R.report();
-if (fails) console.log(srv.log.join('').slice(-2000));
+if (fails && srv) console.log(srv.log.join('').slice(-2000));
 process.exit(fails ? 1 : 0);

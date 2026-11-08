@@ -12,6 +12,10 @@ services:
         value: 10000
       - key: STATE_DIR
         value: /data
+      # Render's guide: Cloudflare writes CF-Connecting-IP on every request and overwrites the caller's
+      # value (https://render.com/articles/host-pocketbase-on-render). Remove to share one limit instead.
+      - key: CLIENT_IP_HEADER
+        value: cf-connecting-ip
       - key: GITHUB_TOKEN
         sync: false
     disk:

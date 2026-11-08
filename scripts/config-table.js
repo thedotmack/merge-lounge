@@ -14,7 +14,7 @@ export function configTable() {
     ['repo', 'required', `The GitHub repo whose merged-PR authors get in, as ${code('owner/name')}. The ${code('REPO')} env var overrides it.`],
     ['loungeName', code(D.loungeName), 'Name on the landing page, the top bar and the ticker.'],
     ['project.name', `the repo name (${code(ex.project.name)})`, 'Used in the copy: "a merged PR in …", profiles, page title.'],
-    ['project.url', code(ex.project.url), 'Footer and menu link.'],
+    ['project.url', code(ex.project.url), 'Footer and menu link. Must start with `https://`.'],
     ['project.tagline', 'empty', 'Shown when someone taps the neon sign.'],
     ['admins', code('[]'), `GitHub logins with admin commands. The ${code('ADMINS')} env var (comma-separated) overrides it.`],
     ['timezone', code(D.timezone), 'IANA time zone for the window\'s day and night, the daily counters and the 4am contributor refresh.'],

@@ -1,10 +1,13 @@
 // End-to-end smoke test. Starts its own server (temp state folder, free port, a test config and a tiny
-// fake contributor snapshot), mints test-* sessions, then checks HTTP, check-in and the room.
+// fake contributor snapshot), mints test-* sessions, then checks HTTP, check-in and the room, plus a few
+// one-off servers: state from another repo, a person named like the bot, client-IP headers on and off Fly.
 // OFFLINE=1 skips only the checks that need GitHub. Exit code 1 if anything fails.
 //
 //   node test/smoke.mjs
 //   SMOKE_REPO / SMOKE_MEMBER / SMOKE_STRANGER override the GitHub-backed checks (default: the repo and
 //   first admin from lounge.config.json, and torvalds as someone who isn't a contributor).
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   OFFLINE, sleep, committedConfig, makeState, startServer, getJson, postJson, Client, recorder, cleanup,
 } from './helpers.mjs';
@@ -42,17 +45,26 @@ const snapshot = {
   ],
 };
 const names = ['test-ada', 'test-bob', 'test-cy'];
-const st = makeState({ config: testConfig, snapshot, testLogins: [...names, 'test-admin', 'test-dee'] });
-const tokens = st.tokens;
-const srv = await startServer({ stateDir: st.stateDir, configPath: st.configPath, env: { ADMINS: 'test-admin' } });
-const BASE = srv.base;
+const tally = (a) => a.reduce((m, r) => ((m[r] = (m[r] || 0) + 1), m), {});
+// live-found contributors: one tagged with this repo (trusted), one with no tag (written before tags; dropped)
+const extra = {
+  'test-extra': { login: 'test-extra', merged: 3, first: '2026-04-01', last: '2026-04-02', repo: REPO },
+  'test-legacy': { login: 'test-legacy', merged: 4, first: '2025-01-01', last: '2025-02-01' },
+};
+let st, srv;
 const clients = [];
-const client = (login) => { const c = new Client(srv.ws, tokens[login]); clients.push(c); return c; };
 
 try {
+  st = makeState({ config: testConfig, snapshot, testLogins: [...names, 'test-admin', 'test-dee'], files: { 'contributors-extra.json': extra } });
+  const tokens = st.tokens;
+  // CLIENT_IP_HEADER names the one header to trust; requests without it count by socket address
+  srv = await startServer({ stateDir: st.stateDir, configPath: st.configPath, env: { ADMINS: 'test-admin', CLIENT_IP_HEADER: 'x-test-ip' } });
+  const BASE = srv.base;
+  const client = (login) => { const c = new Client(srv.ws, tokens[login]); clients.push(c); return c; };
+
   // ---------------------------------------------------------------- HTTP
   const s0 = await getJson(BASE, '/api/status');
-  ok('status has numbers', s0.j?.contributors === 2 && s0.j?.mergedPRs >= 42, JSON.stringify(s0.j));
+  ok('status has numbers', s0.j?.contributors === 3 && s0.j?.mergedPRs >= 42, JSON.stringify(s0.j));
   ok('status: snapshot ready', s0.j?.snapshot === 'ready', s0.j?.snapshot);
 
   const cfgRes = await fetch(BASE + '/api/config');
@@ -67,7 +79,10 @@ try {
   const idx = await fetch(BASE + '/');
   const idxHtml = await idx.text();
   ok('index served with CSP', idx.status === 200 && /script-src 'self'/.test(idx.headers.get('content-security-policy') || ''));
-  ok('config is not inlined into the page', !idxHtml.includes('smoke-project') && !/<script>(?!<\/script>)/.test(idxHtml));
+  const inline = [...idxHtml.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].filter(([, attrs, body]) => !/\bsrc\s*=/i.test(attrs) || body.trim());
+  ok('config is not inlined into the page (no inline scripts of any type)', !idxHtml.includes('smoke-project') && inline.length === 0, inline.map((m) => m[0].slice(0, 60)).join(' | '));
+  const marker = JSON.parse(fs.readFileSync(path.join(st.stateDir, 'lounge.json'), 'utf8'));
+  ok('state with no lounge.json is adopted for this repo (sessions kept)', marker.repo === REPO, JSON.stringify(marker));
   for (const f of ['/app.js', '/engine.js', '/style.css', '/favicon.svg', '/fonts/silkscreen-latin-400-normal.woff2', '/shared/world.js', '/shared/config.js']) {
     const r = await fetch(BASE + f);
     ok('serves ' + f, r.status === 200, r.headers.get('content-type'));
@@ -102,6 +117,18 @@ try {
   ok('start: same browser keeps the same code', a6.j?.code === a2.j?.code && a6.j?.nonce === a2.j?.nonce);
   const a7 = await postJson(BASE, '/api/auth/start', { login: 'test-member' });
   ok('start: another browser gets a different code', a7.j?.ok && a7.j.code !== a2.j?.code);
+  const a8 = await postJson(BASE, '/api/auth/start', { login: 'test-extra' });
+  ok('start: a live-found contributor tagged with this repo gets a code', a8.j?.ok && a8.j.merged === 3, JSON.stringify(a8.j));
+  const a9 = await postJson(BASE, '/api/auth/start', { login: 'test-legacy' });
+  ok('start: an untagged live-found entry is not trusted', a9.j && a9.j.ok !== true, `${a9.status} ${JSON.stringify(a9.j)}`);
+  ok('untagged live-found entries are dropped from the file', !JSON.parse(fs.readFileSync(path.join(st.stateDir, 'contributors-extra.json'), 'utf8'))['test-legacy']);
+
+  // client IP: only CLIENT_IP_HEADER counts; a Fly-Client-IP sent by the client changes nothing
+  const ipRes = [];
+  for (let i = 0; i < 36; i++) ipRes.push((await postJson(BASE, '/api/auth/start', { login: 'x!' }, { 'x-test-ip': '203.0.113.9', 'Fly-Client-IP': `198.51.100.${i}` })).status);
+  ok('CLIENT_IP_HEADER is the address that gets limited (rotating Fly-Client-IP ignored)', (tally(ipRes)[429] || 0) >= 4, JSON.stringify(tally(ipRes)));
+  const junkIp = await postJson(BASE, '/api/auth/start', { login: 'x!' }, { 'x-test-ip': 'not-an-ip' });
+  ok('a CLIENT_IP_HEADER value that is not an IP falls back to the socket address', junkIp.status === 400, String(junkIp.status));
   if (OFFLINE || !MEMBER) {
     for (const n of ['start: real contributor gets a code (live GitHub lookup)', 'start: non-contributor is turned away (live lookup)', 'verify: no gist yet means no token']) skip(n, OFFLINE ? 'needs GitHub' : 'no SMOKE_MEMBER');
   } else {
@@ -240,32 +267,94 @@ try {
   ok('smoke test ran to the end', false, e.stack || e.message);
 } finally {
   for (const c of clients) c.close();
-  await srv.stop();
-  cleanup(st.dir);
+  await srv?.stop();
+  if (st) cleanup(st.dir);
 }
 
-// ---------------------------------------------------------------- snapshots for another repo are never used
-for (const [label, snap] of [
-  ['snapshot for another repo', { ...snapshot, repo: 'someone-else/other-repo' }],
-  ['snapshot with no repo field', { generated: snapshot.generated, total_merged_prs: 42, contributors: snapshot.contributors }],
-]) {
-  const st2 = makeState({ config: testConfig, snapshot: snap });
-  let srv2;
+// A throwaway server for one scenario; always stopped and cleaned up.
+async function scenario(label, state, env, fn) {
+  let s2, srv2;
   try {
-    srv2 = await startServer({ stateDir: st2.stateDir, configPath: st2.configPath, env: { ADMINS: 'test-admin' } });
-    const s = await getJson(srv2.base, '/api/status');
-    ok(`${label}: status says it is rebuilding, not ready`, ['building', 'missing'].includes(s.j?.snapshot) && s.j?.contributors === 0, JSON.stringify(s.j));
-    const r = await postJson(srv2.base, '/api/auth/start', { login: 'test-member' });
-    ok(`${label}: its people are not let in from it`, r.j && r.j.ok !== true, `${r.status} ${JSON.stringify(r.j)}`);
-    await sleep(300);
-    ok(`${label}: a background rebuild was started`, /rebuilding the snapshot for/.test(srv2.log.join('')), srv2.log.join('').split('\n').filter((l) => /contributors:/.test(l)).slice(0, 2).join(' | '));
+    s2 = makeState(state);
+    srv2 = await startServer({ stateDir: s2.stateDir, configPath: s2.configPath, env });
+    await fn(srv2, s2);
   } catch (e) {
-    ok(`${label}: ran`, false, e.message);
+    ok(`${label}: ran`, false, e.stack || e.message);
   } finally {
     await srv2?.stop();
-    cleanup(st2.dir);
+    if (s2) cleanup(s2.dir);
   }
 }
+const oldChat = { seq: 1, items: [{ kind: 'say', uid: 'x', login: 'x', text: 'chat from the OLD lounge', id: 1, ts: Date.now() }] };
+
+// ---------------------------------------------------------------- snapshots and state from another repo are never used
+for (const [label, snap, keepsSessions] of [
+  ['snapshot for another repo', { ...snapshot, repo: 'someone-else/other-repo' }, false],
+  ['snapshot with no repo field', { generated: snapshot.generated, total_merged_prs: 42, contributors: snapshot.contributors }, true],
+]) {
+  await scenario(label, { config: testConfig, snapshot: snap, testLogins: ['test-old'], files: { 'chat.json': oldChat } }, { ADMINS: 'test-admin' }, async (s2, st2) => {
+    const s = await getJson(s2.base, '/api/status');
+    ok(`${label}: status says it is rebuilding, not ready`, ['building', 'missing'].includes(s.j?.snapshot) && s.j?.contributors === 0, JSON.stringify(s.j));
+    const r = await postJson(s2.base, '/api/auth/start', { login: 'test-member' });
+    ok(`${label}: its people are not let in from it`, r.j && r.j.ok !== true, `${r.status} ${JSON.stringify(r.j)}`);
+    await sleep(300);
+    const log = s2.log.join('');
+    ok(`${label}: a background rebuild was started`, /rebuilding the snapshot for/.test(log), log.split('\n').filter((l) => /contributors:/.test(l)).slice(0, 3).join(' | '));
+    if (OFFLINE) ok(`${label}: OFFLINE=1 rebuild makes no GitHub calls`, /OFFLINE=1 is set, so no GitHub calls/.test(log), log.split('\n').filter((l) => /contributors:/.test(l)).slice(0, 4).join(' | '));
+    const O = new Client(s2.ws, st2.tokens['test-old']);
+    const w = await O.open();
+    O.close();
+    if (keepsSessions) ok(`${label}: no sign of another repo, so sessions and chat are kept`, w.t === 'welcome' && w.history?.some((h) => /OLD lounge/.test(h.text)), w.t);
+    else ok(`${label}: the state was another repo's, so its sessions and chat are gone`, w.t === 'auth' && w.ok === false && /cleared its sessions/.test(log), `${w.t} ${JSON.stringify(w.history?.map((h) => h.text))}`);
+  });
+}
+
+await scenario('state marked for another repo', {
+  config: testConfig, snapshot, testLogins: ['test-old'], marker: { repo: 'someone-else/old-lounge' },
+  files: { 'chat.json': oldChat, 'contributors-extra.json': { 'test-extra': { ...extra['test-extra'], repo: 'someone-else/old-lounge' } } },
+}, { ADMINS: 'test-admin' }, async (s2, st2) => {
+  const O = new Client(s2.ws, st2.tokens['test-old']);
+  const w = await O.open();
+  O.close();
+  ok('repo change: an old session is refused', w.t === 'auth' && w.ok === false, w.t);
+  const r = await postJson(s2.base, '/api/auth/start', { login: 'test-extra' });
+  ok('repo change: someone found live for the old repo is not let in', r.j && r.j.ok !== true, `${r.status} ${JSON.stringify(r.j)}`);
+  const r2 = await postJson(s2.base, '/api/auth/start', { login: 'test-member' });
+  ok('repo change: this repo\'s snapshot still works', r2.j?.ok === true, JSON.stringify(r2.j));
+  const marker = JSON.parse(fs.readFileSync(path.join(st2.stateDir, 'lounge.json'), 'utf8'));
+  ok('repo change: lounge.json now names this repo, chat history is gone', marker.repo === REPO && !fs.existsSync(path.join(st2.stateDir, 'chat.json')), JSON.stringify(marker));
+});
+
+// ---------------------------------------------------------------- a person who shares the bot's name; client IP off Fly
+await scenario('bot name collision', {
+  config: { repo: 'example-org/bot-test', bot: { name: 'test-bot' } },
+  snapshot: { repo: 'example-org/bot-test', generated: '', total_merged_prs: 6, contributors: [{ login: 'test-bot', merged: 3, first: '', last: '' }, { login: 'test-ada', merged: 3, first: '', last: '' }] },
+  testLogins: ['test-bot', 'test-ada'],
+}, {}, async (s2, st2) => {
+  const A = new Client(s2.ws, st2.tokens['test-ada']);
+  const wA = await A.open();
+  const botU = wA.users?.find((u) => u.npc);
+  ok('the bot\'s id can never be a GitHub login', botU?.id === 'bot:test-bot' && botU.login === 'test-bot', JSON.stringify(botU));
+  const H = new Client(s2.ws, st2.tokens['test-bot']);
+  const wH = await H.open();
+  ok('a person named like the bot is a person', wH.t === 'welcome' && wH.you?.id === 'test-bot' && wH.users.filter((u) => u.login === 'test-bot').length === 2, JSON.stringify(wH.you));
+  H.send({ t: 'chat', text: 'hello i am a human' });
+  ok('their chat reaches others', !!(await A.wait((m) => m.t === 'chat' && m.uid === 'test-bot' && !m.npc && /i am a human/.test(m.text || ''))));
+  H.close();
+  ok('they leave as themselves', !!(await A.wait((m) => m.t === 'leave' && m.id === 'test-bot', 9000)));
+  ok('the bot stays', !A.has((m) => m.t === 'leave' && m.id === 'bot:test-bot') && !/error/i.test(s2.log.join('')), s2.log.join('').split('\n').filter((l) => /error/i.test(l)).slice(0, 2).join(' | '));
+  A.close();
+  // not on Fly and no CLIENT_IP_HEADER: a client-sent Fly-Client-IP is ignored, everyone counts as the socket address
+  const res = [];
+  for (let i = 0; i < 320; i++) res.push((await postJson(s2.base, '/api/auth/start', { login: 'x!' }, { 'Fly-Client-IP': `198.51.100.${i % 250}` })).status);
+  ok('off Fly, a rotating Fly-Client-IP does not get its own limits', (tally(res)[429] || 0) >= 5, JSON.stringify(tally(res)));
+});
+
+await scenario('on Fly', { config: { repo: 'example-org/fly-test' } }, { FLY_APP_NAME: 'test-app' }, async (s2) => {
+  const fixed = [];
+  for (let i = 0; i < 36; i++) fixed.push((await postJson(s2.base, '/api/auth/start', { login: 'x!' }, { 'Fly-Client-IP': '203.0.113.7' })).status);
+  ok('on Fly (FLY_APP_NAME set), Fly-Client-IP is the address that gets limited', (tally(fixed)[429] || 0) >= 4, JSON.stringify(tally(fixed)));
+});
 
 const fails = R.report();
 process.exit(fails ? 1 : 0);

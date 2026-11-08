@@ -71,9 +71,33 @@ const BOT_RE = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,18}[A-Za-z0-9])?$/;
 const PREFIX_RE = /^[a-z0-9](?:[a-z0-9-]{0,22}[a-z0-9])?$/;
 const KNOWN = new Set(Object.keys(DEFAULTS));
 
+const NESTED = ['project', 'neon', 'skyline', 'bot', 'theme'];
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 const sameRepo = (a, b) => str(a).toLowerCase() === str(b).toLowerCase();
+const isNote = (k) => k.startsWith('$') || k.startsWith('_'); // "$comment"-style keys are left alone
+
+// "https://github.com/owner/name(.git)(/anything)" → "owner/name", anything else → ''
+export function githubRepoOf(url) {
+  const m = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?(?:[/?#]|$)/i.exec(str(url));
+  return m ? `${m[1]}/${m[2]}` : '';
+}
+
+// Text colour for buttons painted in the accent colour: dark or light, whichever reads better (WCAG contrast).
+export const ACCENT_INK = { dark: '#1b1007', light: '#fff8ef' };
+function luminance(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+export function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+export function accentInk(accent) {
+  if (!/^#[0-9a-f]{6}$/i.test(str(accent))) return ACCENT_INK.dark;
+  return contrast(accent, ACCENT_INK.dark) >= contrast(accent, ACCENT_INK.light) ? ACCENT_INK.dark : ACCENT_INK.light;
+}
 
 // "hello-world" → ['HELLO', 'WORLD'], "fastAPI_tools" → ['FAST', 'API', 'TOOLS']
 export function splitWords(name) {
@@ -166,7 +190,12 @@ export function resolveConfig(raw = {}, env = {}, opts = {}) {
     warn(`REPO=${envRepo} is a different repo than the config file (${str(src.repo)}), so the file is ignored and defaults are used. Edit the config file instead.`);
     src = {};
   }
-  for (const k of Object.keys(src)) if (!KNOWN.has(k) && !k.startsWith('$') && !k.startsWith('_')) warn(`unknown setting "${k}" ignored`);
+  for (const k of Object.keys(src)) if (!KNOWN.has(k) && !isNote(k)) warn(`unknown setting "${k}" ignored`);
+  for (const k of NESTED) {
+    if (src[k] === undefined) continue;
+    if (!isObj(src[k])) { warn(`"${k}" should be an object ({ … }), ignored`); continue; }
+    for (const n of Object.keys(src[k])) if (!Object.hasOwn(DEFAULTS[k], n) && !isNote(n)) warn(`unknown setting "${k}.${n}" ignored`);
+  }
 
   const repo = envRepo || str(src.repo);
   if (repo && !REPO_RE.test(repo)) {
@@ -185,10 +214,15 @@ export function resolveConfig(raw = {}, env = {}, opts = {}) {
   const url = str(p.url);
   c.project = {
     name: str(p.name).slice(0, 60) || repoName || 'this project',
-    url: /^https?:\/\/[^\s"<>]+$/i.test(url) ? url.slice(0, 300) : (goodRepo ? `https://github.com/${goodRepo}` : ''),
+    url: /^https:\/\/[^\s"<>]+$/i.test(url) ? url.slice(0, 300) : (goodRepo ? `https://github.com/${goodRepo}` : ''),
     tagline: str(p.tagline).slice(0, 120),
   };
-  if (url && c.project.url !== url) warn('project.url should start with https://');
+  if (url && c.project.url !== url) warn(`project.url should start with https:// (got "${url.slice(0, 80)}"), using ${c.project.url || 'no link'}`);
+  // a link to some other GitHub repo usually means the file was copied from another lounge's config
+  const linked = githubRepoOf(c.project.url);
+  if (goodRepo && linked && !sameRepo(linked, goodRepo)) {
+    warn(`project.url points at ${linked}, but repo is ${goodRepo}. Was this config copied from another lounge? Its name, sign and bot lines may still be theirs.`);
+  }
 
   c.admins = (str(env.ADMINS) ? logins(String(env.ADMINS).split(','), warn, 'ADMINS') : logins(src.admins, warn, 'admins')).map((s) => s.toLowerCase());
 

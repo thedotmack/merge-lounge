@@ -1,0 +1,67 @@
+{
+  "repo": "thedotmack/claude-mem",
+  "loungeName": "Merge Lounge",
+  "project": {
+    "name": "claude-mem",
+    "url": "https://github.com/thedotmack/claude-mem",
+    "tagline": "persistent memory for AI coding agents"
+  },
+  "admins": ["thedotmack"],
+  "timezone": "America/Los_Angeles",
+  "neon": { "top": "CLAUDE", "bottom": "MEM" },
+  "blimp": "CMEM",
+  "skyline": {
+    "city": "San Francisco",
+    "names": [
+      "TOKENLY", "CTXBASE", "VECTORLY", "PROMPTCO", "AGI SOON", "GPU BARN", "MEMLABS", "LGTM CAP",
+      "SHIPIT", "10X LABS", "RAGTAG", "EVALS4U", "DIFFCO", "HOTFIX", "SERIES Z", "INFER.IO",
+      "STEALTH", "YOLO OPS", "MERGEINC", "NEURALLY", "COMPUTE+", "PIVOTLY", "ATTENTIO", "WEIGHTS"
+    ],
+    "billboards": [
+      ["CONTEXT IS", "ALL YOU NEED"], ["YOUR AGENT", "FORGOT AGAIN?"], ["MEMORY >", "VIBES"],
+      ["HIRING: 10X", "PROMPTER"], ["SHIP ON", "FRIDAYS"], ["TOKENS: CHEAP", "MEMORY: RARE"],
+      ["CLAUDE-MEM", "REMEMBERS"], ["AGI BY Q3", "(MAYBE)"], ["SESSION", "AMNESIA? NAH"],
+      ["MERGED >", "PERFECT"], ["LGTM", "SHIP IT"], ["ZERO-SHOT", "ZERO SLEEP"]
+    ]
+  },
+  "ticker": [
+    "{contributors} MERGED CONTRIBUTORS",
+    "{mergedPRs} PRS MERGED",
+    "{online} IN THE LOUNGE",
+    "{gongs:GONG} TODAY",
+    "CONTEXT IS ALL YOU NEED",
+    "{deploys:DEPLOY} TO PROD TODAY",
+    "WELCOME TO THE MERGE LOUNGE"
+  ],
+  "bot": {
+    "name": "observer",
+    "greet": ["welcome to the lounge, @{login} — {merged:merged PR}. you're in the timeline now."],
+    "welcomeBack": ["welcome back, @{login}. last seen {ago}."],
+    "mention": [
+      "observing. always observing. 📝",
+      "noted. filed under \"things said in the lounge\".",
+      "i don't sleep. i compress.",
+      "that one is going straight into the timeline.",
+      "saved 1 observation. 87% fewer tokens than remembering it the hard way.",
+      "i've read every merged PR in this repo. yes, even that one.",
+      "context is all you need.",
+      "try /stats if you want the receipts.",
+      "my context window is your context window.",
+      "beep. the session amnesia ends here."
+    ],
+    "idle": [
+      "tip: tap the fridge for a kombucha, or the bar for a cold brew.",
+      "tip: tap anyone to see their merged PRs.",
+      "tip: the gong is for merges. ring responsibly.",
+      "tip: /dance exists.",
+      "tip: the wall of fame (left wall) lists every merged contributor.",
+      "tip: whisper with /w @someone your message."
+    ],
+    "gong": ["🔔 shipped. noted.", "merge energy detected.", "another one for the timeline.", "that gong goes in the changelog."],
+    "deploy": ["rolling back… jk.", "on-call has been paged. (it is you.)", "🔥 this is fine 🔥", "ship it. ship it all."]
+  },
+  "codePrefix": "cmem-lounge",
+  "theme": { "accent": "#f26b3a" },
+  "allow": [],
+  "minMergedPRs": 1
+}

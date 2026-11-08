@@ -40,13 +40,15 @@ export async function freePort() {
 
 // Make a state folder: optional config file, optional snapshot, and test-* sessions minted before the
 // server starts (so a pending server save can't overwrite them).
-export function makeState({ config, snapshot, testLogins = [] } = {}) {
+export function makeState({ config, snapshot, testLogins = [], marker, files = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-test-'));
   const stateDir = path.join(dir, 'state');
   fs.mkdirSync(stateDir);
   let configPath = '';
   if (config) { configPath = path.join(dir, 'lounge.config.json'); fs.writeFileSync(configPath, JSON.stringify(config, null, 2)); }
   if (snapshot) fs.writeFileSync(path.join(stateDir, 'contributors.json'), JSON.stringify(snapshot));
+  if (marker) fs.writeFileSync(path.join(stateDir, 'lounge.json'), JSON.stringify(marker)); // which repo the state belongs to
+  for (const [name, data] of Object.entries(files)) fs.writeFileSync(path.join(stateDir, name), JSON.stringify(data));
   let tokens = {};
   if (testLogins.length) {
     const out = execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'mint-session.js'), ...testLogins], {
@@ -57,33 +59,43 @@ export function makeState({ config, snapshot, testLogins = [] } = {}) {
   return { dir, stateDir, configPath, tokens };
 }
 
+// Servers still running when the test process exits (a crash, Ctrl-C) are killed with their whole
+// process group, so a contributor rebuild they started can't outlive them.
+const running = new Set();
+const killGroup = (child, sig) => { try { process.kill(-child.pid, sig); } catch { /* already gone */ } };
+process.on('exit', () => { for (const c of running) killGroup(c, 'SIGKILL'); });
+
 export async function startServer({ stateDir, configPath, env = {} }) {
   const port = await freePort();
-  const childEnv = { ...process.env, PORT: String(port), STATE_DIR: stateDir, ...env };
-  delete childEnv.REPO; // the test config decides the repo
-  delete childEnv.REFRESH_ON_START;
-  delete childEnv.CLIENT_IP_HEADER;
+  const base = { ...process.env };
+  // the test decides these, never the shell the tests run in
+  for (const k of ['REPO', 'ADMINS', 'CONFIG_PATH', 'REFRESH_ON_START', 'CLIENT_IP_HEADER', 'FLY_APP_NAME']) delete base[k];
+  const childEnv = { ...base, PORT: String(port), STATE_DIR: stateDir, ...env };
   if (configPath) childEnv.CONFIG_PATH = configPath;
-  const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  // its own process group (detached), so stop() can take the server and anything it spawned down together
+  const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  running.add(child);
+  child.once('exit', () => running.delete(child));
   const log = [];
   for (const s of [child.stdout, child.stderr]) s.on('data', (d) => log.push(String(d)));
-  const base = `http://127.0.0.1:${port}`;
+  const url = `http://127.0.0.1:${port}`;
   const srv = {
-    port, base, child, log,
+    port, base: url, child, log,
     ws: `ws://127.0.0.1:${port}/ws`,
     alive: () => child.exitCode === null && child.signalCode === null,
     async stop() {
       if (srv.alive()) {
         const gone = new Promise((r) => child.once('exit', r));
-        child.kill('SIGTERM');
+        child.kill('SIGTERM'); // the server stops its own rebuild child on SIGTERM
         await Promise.race([gone, sleep(5000)]);
-        if (srv.alive()) child.kill('SIGKILL');
       }
+      killGroup(child, 'SIGKILL'); // whatever is left in its group, the server included
+      running.delete(child);
     },
   };
   for (let i = 0; i < 100; i++) {
-    if (!srv.alive()) throw new Error(`server exited early:\n${log.join('')}`);
-    try { const r = await fetch(base + '/api/status'); if (r.ok) return srv; } catch { /* not up yet */ }
+    if (!srv.alive()) { killGroup(child, 'SIGKILL'); throw new Error(`server exited early:\n${log.join('')}`); }
+    try { const r = await fetch(url + '/api/status'); if (r.ok) return srv; } catch { /* not up yet */ }
     await sleep(100);
   }
   await srv.stop();

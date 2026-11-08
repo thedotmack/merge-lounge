@@ -3,7 +3,7 @@ import { Valley, localHour, skyAt } from './valley.js';
 import { makeCanvas } from './pixel.js';
 import { avatarSprite } from './avatar.js';
 import { LOOK, REACTIONS, FURNITURE, defaultLook, hash32 } from '/shared/world.js';
-import { resolveConfig, defaultConfig, slug } from '/shared/config.js';
+import { resolveConfig, defaultConfig, slug, accentInk } from '/shared/config.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -51,7 +51,10 @@ function applyConfig() {
   const c = CFG, proj = c.project.name;
   document.title = `${c.loungeName} · ${proj}`;
   $('meta[name="description"]')?.setAttribute('content', `A pixel hangout for everyone with a merged PR in ${proj}.`);
-  if (/^#[0-9a-f]{6}$/i.test(c.theme.accent)) document.documentElement.style.setProperty('--accent', c.theme.accent);
+  if (/^#[0-9a-f]{6}$/i.test(c.theme.accent)) {
+    document.documentElement.style.setProperty('--accent', c.theme.accent);
+    document.documentElement.style.setProperty('--accent-ink', accentInk(c.theme.accent)); // readable on any accent
+  }
   const [w1, ...rest] = c.loungeName.toUpperCase().split(/\s+/);
   $('#landTitle').setAttribute('aria-label', c.loungeName);
   $('#landT1').textContent = w1;
@@ -424,6 +427,12 @@ function handle(m) {
       if (m.kind === 'deploy') e.addReact(m.by, '🚨');
       return;
     case 'stats': setStats(m.stats); return;
+    case 'merged': { // someone's merged-PR count changed (a fresh contributor list landed)
+      const u = e.users.get(m.id);
+      if (u && Number.isFinite(m.merged)) u.merged = m.merged;
+      if (m.id === state.me?.id && Number.isFinite(m.merged)) state.me.merged = m.merged;
+      return;
+    }
     case 'notice': toast(m.text); return;
     case 'kicked':
       state.noReconnect = true;
@@ -452,10 +461,10 @@ function setStats(s) {
 
 // ------------------------------------------------------------------ chat log
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
-function colorFor(login) {
-  const u = [...state.engine.users.values()].find((x) => x.login === login);
+function colorFor(login, npc = false) {
+  if (npc) return '#ff9466'; // the bot (a person may share its name, so go by the npc flag)
+  const u = [...state.engine.users.values()].find((x) => !x.npc && x.login === login);
   if (u && u.look && !u.look.bot) return LOOK.topColor[u.look.topColor];
-  if (login === botName()) return '#ff9466';
   const look = defaultLook(login || 'x');
   return LOOK.topColor[look.topColor];
 }
@@ -472,7 +481,7 @@ function addLog(m, live) {
   const time = document.createElement('time');
   time.textContent = timeFmt.format(new Date(m.ts || Date.now()));
   const body = document.createElement('span');
-  const who = (name) => { const b = document.createElement('b'); b.className = 'who'; b.style.setProperty('--c', colorFor(name)); b.textContent = name; return b; };
+  const who = (name) => { const b = document.createElement('b'); b.className = 'who'; b.style.setProperty('--c', colorFor(name, !!m.npc)); b.textContent = name; return b; };
   if (m.kind === 'say') { body.append(who(m.login), document.createTextNode(' ' + esc(m.text))); }
   else if (m.kind === 'me') { body.className = 'me'; body.append(who(m.login), document.createTextNode(' ' + esc(m.text))); }
   else if (m.kind === 'whisper') { body.className = 'wh'; body.append(who(m.login), document.createTextNode(` → ${m.to}: ${esc(m.text)}`)); }
